@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Engine } from './core/engine.js';
+import { Audio } from './core/audio.js';
 import { TIER, QUALITY } from './core/quality.js';
 import { createSky, createLighting } from './world/sky.js';
 import { GlowField } from './world/glowfield.js';
@@ -52,7 +53,11 @@ async function main() {
   progress(85);
   await frame();
 
+  // Built here but silent until start(); browsers require a user gesture.
+  const audio = new Audio();
+
   const racing = new Racing(engine, glow, {
+    audio,
     onExit: () => {
       // Restore the walking rig exactly where it was left.
       engine.rig.position.copy(savedRig.position);
@@ -94,7 +99,10 @@ async function main() {
 
   // Weather toggle — the only "setting" exposed in-world for now.
   addEventListener('keydown', (e) => {
-    if (e.code === 'KeyR') city.setRain(!city.rain.visible);
+    if (e.code !== 'KeyR') return;
+    const on = !city.rain.visible;
+    city.setRain(on);
+    audio.setRain(on);
   });
 
   engine.start();
@@ -107,6 +115,7 @@ async function main() {
     enterBtn.textContent = 'Enter VR';
     enterBtn.onclick = async () => {
       try {
+        audio.start();
         await engine.enterVR();
         dismiss();
       } catch (err) {
@@ -115,7 +124,7 @@ async function main() {
     };
   } else {
     enterBtn.textContent = 'Explore on desktop';
-    enterBtn.onclick = dismiss;
+    enterBtn.onclick = () => { audio.start(); dismiss(); };
     hint.textContent =
       'No VR runtime detected. WASD to walk, mouse to look, Space on the green pad to race, R for rain.';
   }
@@ -125,7 +134,7 @@ async function main() {
   });
 
   // Expose for the smoke test and for poking at from the console.
-  window.__kaisei = { engine, city, lounge, player, racing, racePad, glow, tier: TIER, quality: QUALITY };
+  window.__kaisei = { engine, city, lounge, player, racing, racePad, glow, audio, tier: TIER, quality: QUALITY };
 }
 
 function dismiss() {

@@ -29,6 +29,7 @@ export class Racing {
   constructor(engine, glow, opts = {}) {
     this.engine = engine;
     this.glow = glow;
+    this.audio = opts.audio ?? null;
     this.mats = library();
     this.rand = makeRNG(99);
     this.onExit = opts.onExit ?? (() => {});
@@ -385,6 +386,7 @@ export class Racing {
 
   enter() {
     this.active = true;
+    this.audio?.setRacing(true);
     this.group.visible = true;
     this.cockpit.visible = true;
     this.state = 'countdown';
@@ -405,6 +407,8 @@ export class Racing {
 
   exit() {
     this.active = false;
+    this.audio?.setRacing(false);
+    this.audio?.setSpeed(0);
     this.group.visible = false;
     this.cockpit.visible = false;
     this.state = 'idle';
@@ -492,6 +496,7 @@ export class Racing {
       if (Math.abs(this.offset - g.offset) < g.radius) {
         this.boost += BOOST_GAIN;
         this._gatesHitTotal++;
+        this.audio?.ping(760 + (this._gatesHitTotal % 5) * 90);
         this._setGateColor(g.index, GATE_HIT);
         g.halo.opacity = 1.4;
       } else {
@@ -515,6 +520,8 @@ export class Racing {
         this._saveRun(this.lapTimes.reduce((a, b) => a + b, 0));
       }
     }
+
+    this.audio?.setSpeed(THREE.MathUtils.clamp(this.speed / MAX_SPEED, 0, 1));
 
     this._place();
     this._updateGhost();

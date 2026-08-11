@@ -146,6 +146,13 @@ race.gatesHit > 0 ? ok(`${race.gatesHit} boost gates hit`) : fail('no boost gate
 race.rigY > 10 ? ok(`rig lifted onto the track at ${race.rigY.toFixed(1)}m`) : fail('rig not on track');
 race.offsetInBounds ? ok('craft stayed on the ribbon') : fail('craft left the track');
 
+// --- audio graph came up on the entry gesture
+const audio = await page.evaluate(() => {
+  const a = window.__kaisei.audio;
+  return { started: a.started, state: a.ctx?.state, voices: Object.keys(a.nodes) };
+});
+audio.started ? ok(`audio running (${audio.state}): ${audio.voices.join(', ')}`) : fail('audio never started');
+
 // --- screenshots for eyeballing the look
 await page.evaluate(() => { if (window.__kaisei.racing.active) window.__kaisei.racing.exit(); });
 await page.waitForTimeout(600);
