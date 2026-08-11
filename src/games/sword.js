@@ -431,7 +431,11 @@ export class Sword {
     }
     if (this._keys) {
       if (this._keys.has('Space')) trigger = true;
-      if (this._keys.has('Escape')) grip = true;
+      // Not Escape — see the identical fix and comment in racing.js. The
+      // browser's own pointer-lock-release binding on Escape meant tapping
+      // it for that (no intent to leave the fight at all) silently ejected
+      // the player from the dojo mid-combat.
+      if (this._keys.has('KeyQ')) grip = true;
     }
     return { trigger, grip, hand };
   }

@@ -812,7 +812,12 @@ export class Racing {
     }
     if (this._keys) {
       if (this._keys.has('Space')) trigger = true;
-      if (this._keys.has('Escape')) grip = true;
+      // Not Escape: the browser already binds Escape to releasing pointer
+      // lock, so any player instinctively tapping it to free their mouse —
+      // extremely common muscle memory, no intent to leave anything — was
+      // being silently ejected back to the plaza mid-race. KeyQ has no
+      // competing browser meaning.
+      if (this._keys.has('KeyQ')) grip = true;
       if (this._keys.has('KeyA') || this._keys.has('ArrowLeft')) steer = -1;
       if (this._keys.has('KeyD') || this._keys.has('ArrowRight')) steer = 1;
       if (this._keys.has('KeyS') || this._keys.has('ArrowDown')) brake = true;
