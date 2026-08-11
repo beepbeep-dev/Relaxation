@@ -3,13 +3,13 @@
 **Genre:** VR social sandbox / chill-out space with embedded minigames
 **Platform:** Standalone VR (Quest 3 / 3S as lead), PCVR + flatscreen companion later
 **Session length:** 5 minutes to 5 hours — both should feel correct
-**One-line pitch:** A futuristic city at permanent golden hour where the whole point is to *not* have a point — but every arcade cabinet, rooftop, and back alley hides a full game inside it.
+**One-line pitch:** A futuristic city under a permanent violet dusk where the whole point is to *not* have a point — but every arcade cabinet, rooftop, and back alley hides a full game inside it.
 
 ---
 
 ## 1. Core Premise
 
-You arrive in **Kaisei**, a clean, warm, low-density future city. No quests. No level. No health bar. You walk, sit, listen to rain on a noodle-shop awning, watch trains pass below.
+You arrive in **Kaisei**, a clean, cool, low-density future city. No quests. No level. No health bar. You walk, sit, listen to rain on a noodle-shop awning, watch trains pass below.
 
 The city is the *lobby*, but it never announces itself as one. Games are diegetic — you find them the way you'd find an arcade on a real walk. Three anchor experiences ship at launch:
 
@@ -30,6 +30,7 @@ The design thesis: *relaxation is the container, intensity is optional*. The pla
 | **Comfort first** | Seated-viable, motion-sickness-conscious, quiet by default | Forced locomotion, jump scares, loud stingers |
 | **Earned intensity** | Combat exists but you walk to it | Ambushes in the relaxation space |
 | **Presence over fidelity** | Stylized art, perfect audio, 90fps locked | Photoreal chasing at the cost of frame rate |
+| **The player sets the cost** | Graphics quality is theirs to tune, in-headset, without leaving the world | Locked presets, desktop-only settings, a menu you must exit VR to reach |
 
 ---
 
@@ -37,7 +38,9 @@ The design thesis: *relaxation is the container, intensity is optional*. The pla
 
 ### 3.1 Feel
 
-Warm neon over wet concrete. Think *Shenmue* pacing with *Mirror's Edge* color and *Blade Runner* density dialed down 70%. Perpetual 6pm. Volumetric light through gaps between towers. Distant maglev hum. It is a city that is clearly *lived in* but never crowded — you see maybe 20 NPCs in a district, all going about their own business, none of whom need anything from you.
+Cool neon over wet concrete. Think *Shenmue* pacing with *Mirror's Edge* color and *Blade Runner* density dialed down 70%. Perpetual 6pm. Volumetric light through gaps between towers. Distant maglev hum. It is a city that is clearly *lived in* but never crowded — you see maybe 20 NPCs in a district, all going about their own business, none of whom need anything from you.
+
+**The colour script is green, blue and purple, and nothing else.** Purple sits at the zenith and in every shadow, so nothing unlit is ever neutral grey. Blue is the mid-tone and the key light, so most surfaces read blue. Green is the horizon and every affordance — the race pad, the boost gates, the lit edge of a walkable ramp. Green is the rarest of the three, which is exactly why it is the colour the eye follows, and why it is reserved for things that matter. Warm colour is not part of the game's vocabulary; if something needs to feel warm, it gets to be *brighter*, not oranger.
 
 ### 3.2 Districts (launch scope: 4)
 
@@ -210,13 +213,14 @@ Rationale: the #1 killer of chill VR spaces is one loud stranger. We design defe
 - Subtitles for all ambient dialogue and Echoes; no audio-only critical info
 - Volume ceiling on all combat SFX; no sudden loud events in the city layer
 - Photosensitivity mode dims the neon/parallax layers
+- Every graphics and comfort setting — vignette strength, snap-turn angle, render scale, glow intensity, rain — is adjustable from inside the headset, without removing it or exiting to a 2D menu
 - Colorblind-safe parry telegraphs (shape + color, never color alone)
 
 ---
 
 ## 9. Technical Notes
 
-- **Prototype engine:** Three.js + WebXR, running in the Quest 3 browser. See `docs/GRAPHICS.md` for why, and for the migration path.
+- **Prototype engine:** Three.js + WebXR, running in the Quest 3 browser. Deployed to GitHub Pages, so the current build is reachable from a URL in the headset with nothing to install. See `docs/GRAPHICS.md` for why, and for the migration path.
 - **Production engine (proposed):** Unity + URP (standalone VR maturity, Quest tooling)
 - **Target:** 90fps locked on Quest 3, 72fps floor on 3S; foveated rendering
 - **World streaming:** districts are separate scenes joined by short covered transitions (train car, stairwell, elevator) that mask loads diegetically

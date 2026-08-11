@@ -2,7 +2,7 @@
 
 A VR game where the point is to not have a point.
 
-You live in **Kaisei** — a warm, futuristic city at permanent golden hour. Walk the wet streets. Sit on a rooftop deck and watch lanterns drift past. And when you want intensity, you walk to it: a hover-craft race launching from the plaza, a sword-combat dojo up a side stair, an AR layer over the whole city.
+You live in **Kaisei** — a neon city under a purple sky, lit green at the horizon. Walk the wet streets. Sit on a rooftop deck and watch lanterns drift past. And when you want intensity, you walk to it: a hover-craft race launching from the plaza, a sword-combat dojo up a side stair, an AR layer over the whole city.
 
 The city is the game. No quests, no levels, no timers, nothing that expires.
 
@@ -10,7 +10,7 @@ The city is the game. No quests, no levels, no timers, nothing that expires.
 
 | | |
 |---|---|
-| **Kaisei, street level** | Procedural neon city — walkable, wet, raining if you want it to |
+| **Kaisei, street level** | Procedural neon city — walkable, wet, raining if you want it to. Aircars, rooftop plant, lit vending machines, a distant skyline |
 | **The Lantern** | The chill space. A rooftop deck up a lit ramp: cushions you can sit on, a reflecting pool, paper lanterns, and deliberately nothing to do |
 | **NEON LINE** | The racing game. Three laps of a hover-craft circuit over the rooftops, with boost gates, lap timing, and a ghost of your best run |
 
@@ -23,13 +23,27 @@ npm install
 npm run dev
 ```
 
-Dev server runs over HTTPS with a self-signed certificate, because WebXR requires a secure context.
+The dev server runs over HTTPS with a self-signed certificate, because WebXR requires a secure context.
 
 **On a Quest 3:** open the LAN address it prints (`https://<your-machine-ip>:5173`) in the headset browser, accept the certificate warning, and press **Enter VR**.
 
-**On desktop:** open the same URL. WASD to walk, mouse to look (click to capture), **Space** on the green pad to race, **R** to toggle rain.
+**On desktop:** open the same URL. WASD to walk, mouse to look (click to capture), **Space** on the green pad to race, **R** to toggle rain, **Tab** or **G** for graphics settings.
 
-**In VR:** left stick walks, right stick snap-turns, trigger sits you on a cushion or launches you from the race pad. Everything is seated-playable.
+**In VR:** left stick walks, right stick snap-turns, trigger sits you on a cushion or launches you from the race pad, and squeezing the left grip raises a graphics panel on your wrist. Everything is seated-playable.
+
+## Graphics settings
+
+Four presets — Low, **Balanced** (the Quest 3 target), High, Ultra — plus individual control over roughly twenty values. Your choice is remembered.
+
+Settings split into two kinds. **Live** ones (render scale, foveation, shadows, draw distance, fog, glow, exposure, rain, comfort vignette, snap-turn angle) take effect on the next frame. **Rebuild** ones (city size, detail density, traffic, reflection quality, MSAA) change how the world is constructed, so the panel stages them and offers a reload rather than blacking out a headset mid-session.
+
+Reachable from the boot screen, from a Tab overlay on desktop, and from a slab on your left wrist in VR — a DOM overlay is invisible inside an XR session, so anything reachable in a headset has to be geometry.
+
+## Deploying
+
+Pushing to `main` builds, runs the smoke test against the built output, and publishes to GitHub Pages via `.github/workflows/deploy.yml`. Enable it once under **Settings → Pages → Source → GitHub Actions**.
+
+Pages serves over HTTPS, which is all WebXR needs — so the deployed URL works in the Quest browser directly, with no dev server and nothing to sideload. The build uses relative asset paths, so it works from a project subpath (`/Relaxation/`) or a domain root without changes.
 
 ```bash
 npm run build     # production build
@@ -39,16 +53,17 @@ npm run smoke     # headless verification + screenshots
 ## Docs
 
 - [`docs/GAME_DESIGN.md`](docs/GAME_DESIGN.md) — the full design: city, districts, all three games-in-game, social and comfort rules, scope
-- [`docs/GRAPHICS.md`](docs/GRAPHICS.md) — how the rendering hits a modern look inside a Quest 3 frame budget, and what was traded away
+- [`docs/GRAPHICS.md`](docs/GRAPHICS.md) — how the rendering hits a modern look inside a Quest 3 frame budget, the colour script, the settings architecture, and what was traded away
 
 ## Layout
 
 ```
 src/
-  core/       engine, quality tiers, procedural audio, RNG
-  world/      sky and IBL, materials, city, the Lantern, glow batching
+  core/       engine, settings, quality resolution, stats, procedural audio, RNG
+  world/      palette, sky and IBL, materials, city, the Lantern, glow batching
   player/     locomotion, collision, comfort
   games/      NEON LINE
+  ui/         settings panel and overlay, in-VR wrist panel
 tools/        headless smoke test and visual probes
 ```
 
