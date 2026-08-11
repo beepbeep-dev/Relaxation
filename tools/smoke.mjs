@@ -263,6 +263,27 @@ const audio = await page.evaluate(() => {
 });
 audio.started ? ok(`audio running (${audio.state}): ${audio.voices.join(', ')}`) : fail('audio never started');
 
+// --- photographic surface textures loaded and reached the materials
+const textures = await page.evaluate(async () => {
+  const k = window.__kaisei;
+  // They stream in after boot, so give them a moment.
+  await new Promise((r) => setTimeout(r, 2500));
+  const lib = k.city.mats;
+  return {
+    ground: !!lib.wetGround.map,
+    concrete: !!lib.concrete.map,
+    panel: !!lib.darkMetal.map,
+    groundRepeat: lib.wetGround.map?.repeat.x ?? null,
+    // A texture that failed to decode still attaches but has no image.
+    decoded: !!lib.wetGround.map?.image?.width,
+  };
+});
+console.log('\ntextures:', textures, '\n');
+textures.ground && textures.concrete && textures.panel
+  ? ok('all three surface textures reached their materials')
+  : fail(`surface textures missing: ${JSON.stringify(textures)}`);
+textures.decoded ? ok('surface texture decoded') : fail('surface texture attached but never decoded');
+
 // --- graphics settings actually reach the renderer
 const settings = await page.evaluate(() => {
   const k = window.__kaisei;

@@ -177,6 +177,63 @@ export function puddleTexture(size = 256) {
 
 const col = (hex) => new THREE.Color(hex);
 
+/**
+ * Photographic surface textures, generated offline with sd-turbo and made
+ * tileable (see tools/imagegen/make_textures.py).
+ *
+ * They load *after* the world is already on screen and swap in when ready, so
+ * a slow connection costs detail rather than a black screen — the procedural
+ * noise maps below stay in place until the real thing arrives. That matters in
+ * a headset, where a blocking load is several seconds of staring at nothing.
+ *
+ * BASE_URL rather than a leading slash: the build is served from a project
+ * subpath on GitHub Pages, and an absolute path would 404 there.
+ */
+const SURFACE_TEXTURES = {
+  asphalt: { file: 'asphalt.jpg', repeat: 90 },
+  concrete: { file: 'concrete.jpg', repeat: 9 },
+  panel: { file: 'panel.jpg', repeat: 3 },
+};
+
+export function loadSurfaceTextures(onReady) {
+  const loader = new THREE.TextureLoader();
+  const base = import.meta.env?.BASE_URL ?? './';
+  const out = {};
+  let pending = Object.keys(SURFACE_TEXTURES).length;
+
+  for (const [name, { file, repeat }] of Object.entries(SURFACE_TEXTURES)) {
+    loader.load(
+      `${base}textures/${file}`,
+      (tex) => {
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(repeat, repeat);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 4;
+        out[name] = tex;
+        if (--pending === 0) onReady?.(out);
+      },
+      undefined,
+      () => { if (--pending === 0) onReady?.(out); }   // missing file is not fatal
+    );
+  }
+  return out;
+}
+
+/**
+ * Swap the photographic maps onto the standing materials.
+ *
+ * They go on as `map` only. The albedo is near-greyscale by construction, so
+ * multiplying it against each material's palette colour adds grain without
+ * letting a texture bring its own hue into a strict three-colour script — and
+ * the existing roughness and normal maps keep doing their jobs untouched.
+ */
+export function applySurfaceTextures(tex) {
+  const lib = library();
+  if (tex.asphalt) { lib.wetGround.map = tex.asphalt; lib.wetGround.needsUpdate = true; }
+  if (tex.concrete) { lib.concrete.map = tex.concrete; lib.concrete.needsUpdate = true; }
+  if (tex.panel) { lib.darkMetal.map = tex.panel; lib.darkMetal.needsUpdate = true; }
+}
+
 let cache = null;
 
 export function library() {

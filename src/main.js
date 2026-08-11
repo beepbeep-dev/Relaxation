@@ -7,7 +7,7 @@ import { QUALITY, resolveQuality } from './core/quality.js';
 import { createSky, createLighting } from './world/sky.js';
 import { GlowField } from './world/glowfield.js';
 import { LightPools } from './world/lightpools.js';
-import { library } from './world/materials.js';
+import { library, loadSurfaceTextures, applySurfaceTextures } from './world/materials.js';
 import { City } from './world/city.js';
 import { Lounge } from './world/lounge.js';
 import { RacePad } from './world/racepad.js';
@@ -227,6 +227,10 @@ async function main() {
     statsEl.style.display = show ? 'block' : 'none';
     if (show) statsEl.textContent = stats.line();
   }, 500);
+
+  // Photographic surfaces stream in behind the already-running world rather
+  // than gating the boot on a network round trip.
+  loadSurfaceTextures((tex) => applySurfaceTextures(tex));
 
   engine.start();
   progress(100);
