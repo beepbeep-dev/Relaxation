@@ -41,13 +41,21 @@ Reachable from the boot screen, from a Tab overlay on desktop, and from a slab o
 
 ## Deploying
 
-Pushing to `main` builds, runs the smoke test against the built output, and publishes to GitHub Pages via `.github/workflows/deploy.yml`. Enable it once under **Settings → Pages → Source → GitHub Actions**.
+Live at **https://beepbeep-dev.github.io/Relaxation/**
 
-Pages serves over HTTPS, which is all WebXR needs — so the deployed URL works in the Quest browser directly, with no dev server and nothing to sideload. The build uses relative asset paths, so it works from a project subpath (`/Relaxation/`) or a domain root without changes.
+Every push builds, runs the smoke test and the subpath check against the built output, and — from the default branch — publishes to GitHub Pages via `.github/workflows/deploy.yml`. The workflow also claims the Pages source for Actions, so no manual setting is required.
+
+Pages serves over HTTPS, which is all WebXR needs, so the deployed URL works in the Quest browser directly with no dev server and nothing to sideload.
+
+Two things this setup is deliberately careful about, both because they failed silently the first time:
+
+- **The workflow does not filter on a branch called `main`.** A branch filter that matches nothing produces no runs *and no error*, so a deploy can look configured while it has never once executed. Publishing is gated on `github.event.repository.default_branch` instead, whatever that is named.
+- **The build is verified from a project subpath, not just from `/`.** Serving at a domain root makes every absolute asset URL work, which hides exactly the bug that breaks a project Pages site. `npm run pages-check` serves `dist/` under `/Relaxation/` and fails if anything 404s or the app does not boot.
 
 ```bash
-npm run build     # production build
-npm run smoke     # headless verification + screenshots
+npm run build         # production build
+npm run smoke         # headless verification + screenshots
+npm run pages-check    # boot the bundle from a Pages-style subpath
 ```
 
 ## Docs

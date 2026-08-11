@@ -50,6 +50,12 @@ jobs:
       - name: Smoke test
         run: npm run smoke
 
+      # Serves the bundle from a project subpath the way Pages actually will.
+      # A root-served preview cannot catch an absolute asset URL, because "/"
+      # makes every one of them work.
+      - name: Verify the bundle boots under a Pages subpath
+        run: npm run pages-check
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
