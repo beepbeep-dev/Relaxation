@@ -1,0 +1,47 @@
+name: Unity Android Build
+
+# Builds unity/ into a Quest-installable .apk using GameCI's Unity Editor
+# Docker image, since there is no Unity install anywhere in this repo's own
+# CI or dev environment. See unity/README.md "Building the APK in CI" for
+# what this needs before it can succeed, and for what it does not yet do.
+#
+# workflow_dispatch only, deliberately not on every push: an Android build
+# through IL2CPP takes 10-30+ minutes and burns Unity's free-tier build
+# minutes, and unity/ is not yet a project with a scene in it (see the
+# README), so an automatic run on every commit would just fail loudly and
+# repeatedly until that catches up.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/cache@v4
+        with:
+          path: unity/Library
+          key: Library-android-${{ hashFiles('unity/Assets/**', 'unity/Packages/**', 'unity/ProjectSettings/**') }}
+          restore-keys: |
+            Library-android-
+
+      - name: Build
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity
+          targetPlatform: Android
+          androidExportType: androidPackage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kaisei-quest-apk
+          path: unity/build/Android
+          if-no-files-found: error

@@ -34,12 +34,30 @@ namespace UnityEngine
 
         public Vector3 normalized => this;
         public float magnitude => 0f;
+        public float sqrMagnitude => 0f;
+        // A real normalize needs a real Sqrt; this stub only exists to satisfy
+        // the compiler, same as `normalized` above and everywhere else in this
+        // file that returns a placeholder rather than doing the arithmetic.
+        public void Normalize() { }
 
         public static Vector3 operator +(Vector3 a, Vector3 b) => new Vector3(a.x + b.x, a.y + b.y, a.z + b.z);
         public static Vector3 operator -(Vector3 a, Vector3 b) => new Vector3(a.x - b.x, a.y - b.y, a.z - b.z);
         public static Vector3 operator *(Vector3 a, float f) => new Vector3(a.x * f, a.y * f, a.z * f);
         public static Vector3 operator *(float f, Vector3 a) => a * f;
         public static Vector3 operator /(Vector3 a, float f) => new Vector3(a.x / f, a.y / f, a.z / f);
+
+        public static float Dot(Vector3 a, Vector3 b) => a.x * b.x + a.y * b.y + a.z * b.z;
+
+        // Same formula Unity's real Cross uses. The result differs from what
+        // the *same* formula means in three.js's right-handed convention —
+        // that is a coordinate-system fact, not a stub gap — so a three.js
+        // `crossVectors(forward, up)` does not transliterate to
+        // `Cross(forward, up)` here. See PlayerLocomotion.cs for where this
+        // actually bit the port.
+        public static Vector3 Cross(Vector3 a, Vector3 b) => new Vector3(
+            a.y * b.z - a.z * b.y,
+            a.z * b.x - a.x * b.z,
+            a.x * b.y - a.y * b.x);
     }
 
     public struct Vector4
@@ -93,6 +111,7 @@ namespace UnityEngine
         public static int FloorToInt(float f) => (int)f;
         public static float Clamp(float v, float lo, float hi) => v;
         public static float Lerp(float a, float b, float t) => a;
+        public static float Exp(float power) => (float)System.Math.Exp(power);
     }
 
     public class Object
@@ -111,7 +130,23 @@ namespace UnityEngine
     }
 
     public class Material : Object { }
-    public class Component : Object { }
+
+    // Real Unity computes forward/right/up from `rotation` on read. This
+    // stub keeps them as plain fields instead, matching how Matrix4x4.TRS
+    // and Quaternion.identity above are also placeholders rather than real
+    // math — good enough to type-check calling code, not to run it.
+    public class Transform : Component
+    {
+        public Vector3 position;
+        public Vector3 forward = Vector3.forward;
+        public Vector3 right = Vector3.right;
+        public void RotateAround(Vector3 point, Vector3 axis, float angle) { }
+    }
+
+    public class Component : Object
+    {
+        public Transform transform;
+    }
     public class Behaviour : Component { }
     public class MonoBehaviour : Behaviour { }
 

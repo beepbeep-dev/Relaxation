@@ -41,12 +41,26 @@ Nothing in the architecture changes. The engine changes; the budget does not.
 unity/
   Assets/Kaisei/
     Scripts/
-      Palette.cs           colour script, ported from src/world/palette.js
-      KaiseiQuality.cs     quality tiers + live/rebuild split, from core/settings.js
-      CityGenerator.cs     tiered massing + instancing, from world/city.js
+      Palette.cs            colour script, ported from src/world/palette.js
+      KaiseiQuality.cs      quality tiers + live/rebuild split, from core/settings.js
+      CityGenerator.cs      tiered massing + instancing, from world/city.js
+      PlayerLocomotion.cs   collision, ground-snap, seat, comfort vignette, from src/player/player.js
     Shaders/
-      KaiseiFacade.shader  procedural facade, from world/facade.js
+      KaiseiFacade.shader   procedural facade, from world/facade.js
 ```
+
+`PlayerLocomotion.cs` is intentionally not a drop-in `player.js`: it takes
+already-resolved move/turn/sit intent rather than reading a controller
+itself, because raw WebXR gamepad polling is exactly the plumbing that does
+not transfer (see the XR input row in the table above). Whatever wires up
+XRITK's action-based input calls `Tick(dt, moveX, moveZ, turnX, sitPressed)`
+once a frame. Its class comment documents a real hazard the port hit: three.js
+is right-handed and Unity is left-handed, so the JS file's
+`crossVectors(forward, up)` for the sideways-movement axis does not
+transliterate literally — the operand order has to swap or "left" and
+"right" swap underfoot. That was reasoned through by hand; there is no
+Unity runtime here to confirm it against, so it is worth checking on the
+first play test specifically.
 
 ## Compile-check harness
 
@@ -122,3 +136,48 @@ usually has," not as "verified."
 6. Put `CityGenerator` on an empty GameObject and press play.
 
 Step 5 is the one people get wrong. Every default in a fresh URP mobile project is tuned for a phone game running at 60Hz on one screen, not two eyes at 90.
+
+## Building the APK in CI
+
+`.github/workflows/unity-android-build.yml` uses [GameCI](https://game.ci)'s
+Unity Editor Docker image to produce a `.apk` as a downloadable workflow
+artifact, since neither this repo's dev environment nor its existing GitHub
+Pages deploy has a Unity install anywhere in them. Trigger it manually from
+the Actions tab (`workflow_dispatch`) once the two things below are true —
+running it before then will fail, correctly, since there is nothing valid
+to build yet.
+
+**1. It needs a real Unity project checked in, and `unity/` is not one yet.**
+Everything in this folder up to this commit is loose `Assets/Kaisei/`
+content — scripts and a shader, meant to be copied into a project per
+"Getting it into a project" above. GameCI needs `unity/ProjectSettings/`,
+`unity/Packages/manifest.json` (URP, XR Plugin Management, OpenXR, XR
+Interaction Toolkit, Input System), and at least one scene with an XR
+Origin, wired-up locomotion, and something worth walking around in a
+headset for. None of that can be hand-authored here with any confidence —
+`ProjectSettings.asset` in particular is a large generated file, normally
+produced and validated by the Editor itself, and guessing at its contents
+with no Editor to open the result in is more likely to produce a project
+that silently fails to import than one that builds. The honest path is:
+open Unity 2022.3 LTS once, follow the six steps above to build a real
+project locally, commit the resulting `ProjectSettings/`, `Packages/`, and
+a scene, and from then on this workflow can build every subsequent push.
+
+**2. It needs a Unity license as three GitHub Actions secrets** —
+`UNITY_LICENSE`, `UNITY_EMAIL`, `UNITY_PASSWORD` — which is not something
+this session can obtain on your behalf; it has to come from your own Unity
+ID. A Unity Personal license is free and works for this. The short version
+of GameCI's activation flow (full docs at
+https://game.ci/docs/github/activation):
+   1. Run GameCI's `activate` job locally or via a throwaway Actions run —
+      it produces an `.alf` license-request file.
+   2. Upload that `.alf` at https://license.unity3d.com/manual while signed
+      into your Unity ID; it returns a `.ulf` license file.
+   3. Add the `.ulf` file's contents as the `UNITY_LICENSE` repo secret, and
+      your Unity ID email/password as `UNITY_EMAIL` / `UNITY_PASSWORD`.
+
+Until both of those are done, treat "port it to Unity and build an APK" as
+tracked but not yet actionable — the C# and shader are ported and reviewed,
+but there is real Unity-Editor-in-hand work (assembling the scene, XR rig,
+UI, minigames) between here and a headset install, and no way to shortcut
+that from inside this environment.
