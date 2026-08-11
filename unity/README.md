@@ -147,21 +147,30 @@ the Actions tab (`workflow_dispatch`) once the two things below are true —
 running it before then will fail, correctly, since there is nothing valid
 to build yet.
 
-**1. It needs a real Unity project checked in, and `unity/` is not one yet.**
-Everything in this folder up to this commit is loose `Assets/Kaisei/`
-content — scripts and a shader, meant to be copied into a project per
-"Getting it into a project" above. GameCI needs `unity/ProjectSettings/`,
-`unity/Packages/manifest.json` (URP, XR Plugin Management, OpenXR, XR
-Interaction Toolkit, Input System), and at least one scene with an XR
-Origin, wired-up locomotion, and something worth walking around in a
-headset for. None of that can be hand-authored here with any confidence —
-`ProjectSettings.asset` in particular is a large generated file, normally
-produced and validated by the Editor itself, and guessing at its contents
-with no Editor to open the result in is more likely to produce a project
-that silently fails to import than one that builds. The honest path is:
-open Unity 2022.3 LTS once, follow the six steps above to build a real
-project locally, commit the resulting `ProjectSettings/`, `Packages/`, and
-a scene, and from then on this workflow can build every subsequent push.
+**1. It needs a real Unity project checked in, and `unity/` is partway there.**
+`Packages/manifest.json` (URP, XR Plugin Management, OpenXR, XR Interaction
+Toolkit, Input System) and `ProjectSettings/ProjectVersion.txt` now exist —
+those are plain declarative text, safe to hand-write the same way a `package.json`
+is. Two caveats on them specifically: the package versions are a best-effort
+pin for the Unity 2022.3 LTS era, not verified against the live registry from
+here, so expect Package Manager to want to bump a patch version or two on
+first resolve; and `ProjectVersion.txt`'s revision hash is a placeholder —
+Unity ignores a stale hash and silently rewrites the file with the real one
+the moment it opens the project with a matching-version Editor, so this only
+matters if Unity Hub tries to use it to *auto-install* an Editor, in which
+case fetch the real hash for whatever 2022.3.x LTS patch you use instead.
+
+What is still missing, and is not something to hand-write here: an actual
+`ProjectSettings.asset` (Player settings, URP asset assignment, Android
+target — a few hundred fields, normally generated and validated by the
+Editor itself) and at least one scene with an XR Origin, wired-up
+locomotion, and something worth walking around in a headset for. Guessing
+at `ProjectSettings.asset`'s contents with no Editor here to open the
+result in is more likely to produce a project that silently fails to
+import than one that builds. The honest path is: open Unity 2022.3 LTS
+once, follow the six steps above (the manifest above already does step 2's
+dependency declarations), commit the resulting `ProjectSettings/` and a
+scene, and from then on this workflow can build every subsequent push.
 
 **2. It needs a Unity license as three GitHub Actions secrets** —
 `UNITY_LICENSE`, `UNITY_EMAIL`, `UNITY_PASSWORD` — which is not something

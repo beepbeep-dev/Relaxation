@@ -112,6 +112,9 @@ namespace UnityEngine
         public static float Clamp(float v, float lo, float hi) => v;
         public static float Lerp(float a, float b, float t) => a;
         public static float Exp(float power) => (float)System.Math.Exp(power);
+        public static float Sin(float f) => (float)System.Math.Sin(f);
+        public static float Cos(float f) => (float)System.Math.Cos(f);
+        public static float Atan2(float y, float x) => (float)System.Math.Atan2(y, x);
     }
 
     public class Object
