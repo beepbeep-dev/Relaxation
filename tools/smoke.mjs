@@ -273,14 +273,16 @@ const textures = await page.evaluate(async () => {
     ground: !!lib.wetGround.map,
     concrete: !!lib.concrete.map,
     panel: !!lib.darkMetal.map,
+    wood: !!lib.deckWood.map,
+    fabric: !!lib.cushion.map,
     groundRepeat: lib.wetGround.map?.repeat.x ?? null,
     // A texture that failed to decode still attaches but has no image.
     decoded: !!lib.wetGround.map?.image?.width,
   };
 });
 console.log('\ntextures:', textures, '\n');
-textures.ground && textures.concrete && textures.panel
-  ? ok('all three surface textures reached their materials')
+textures.ground && textures.concrete && textures.panel && textures.wood && textures.fabric
+  ? ok('all five surface textures reached their materials')
   : fail(`surface textures missing: ${JSON.stringify(textures)}`);
 textures.decoded ? ok('surface texture decoded') : fail('surface texture attached but never decoded');
 

@@ -178,8 +178,13 @@ export function puddleTexture(size = 256) {
 const col = (hex) => new THREE.Color(hex);
 
 /**
- * Photographic surface textures, generated offline with sd-turbo and made
- * tileable (see tools/imagegen/make_textures.py).
+ * Photographic surface textures, generated offline with sdxl-turbo and made
+ * tileable (see tools/imagegen/make_textures.py). Covers every surface that
+ * is both seen close up and tiled across a large area — road, building
+ * podium/concrete, dark metal trim, lounge decking, lounge cushions. Glossy
+ * car paint and the low-poly foliage blobs stay procedural: a photographic
+ * map on a smooth painted panel, or on an icosahedron's default UVs, reads
+ * worse than a flat colour, not better.
  *
  * They load *after* the world is already on screen and swap in when ready, so
  * a slow connection costs detail rather than a black screen — the procedural
@@ -193,6 +198,8 @@ const SURFACE_TEXTURES = {
   asphalt: { file: 'asphalt.jpg', repeat: 90 },
   concrete: { file: 'concrete.jpg', repeat: 9 },
   panel: { file: 'panel.jpg', repeat: 3 },
+  wood: { file: 'wood.jpg', repeat: 6 },
+  fabric: { file: 'fabric.jpg', repeat: 4 },
 };
 
 export function loadSurfaceTextures(onReady) {
@@ -232,6 +239,8 @@ export function applySurfaceTextures(tex) {
   if (tex.asphalt) { lib.wetGround.map = tex.asphalt; lib.wetGround.needsUpdate = true; }
   if (tex.concrete) { lib.concrete.map = tex.concrete; lib.concrete.needsUpdate = true; }
   if (tex.panel) { lib.darkMetal.map = tex.panel; lib.darkMetal.needsUpdate = true; }
+  if (tex.wood) { lib.deckWood.map = tex.wood; lib.deckWood.needsUpdate = true; }
+  if (tex.fabric) { lib.cushion.map = tex.fabric; lib.cushion.needsUpdate = true; }
 }
 
 let cache = null;

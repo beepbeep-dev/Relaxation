@@ -1,30 +1,47 @@
 #!/usr/bin/env python3
 """
-Generate the game's surface textures with sd-turbo, then make them usable.
+Generate the game's surface textures with sdxl-turbo, then make them usable.
 
-A diffusion model does not produce a tiling texture. Dropped straight onto a
-500m road, raw output shows a hard seam every tile and the whole thing reads as
-wallpaper. So each image goes through three steps that matter more than the
-prompt:
+Upgraded from sd-turbo (SD2.1-distilled, ~530M UNet, native 512px) to
+sdxl-turbo (SDXL-distilled, ~2.6B UNet + dual text encoders, native 1024px).
+Benchmarked on this machine first (see bench_sdxl.py): ~50s one-time model
+load, ~18s per image at 2 steps, ~11GB peak RSS — comfortably inside a 15GB
+box and a couple of minutes total for the whole set, for a real jump in
+per-pixel detail over the SD2.1 model. That detail is the point: distilled
+turbo models are still small compared to a full multi-step pipeline, so the
+gap between "the fast CPU-friendly model" and "the good model" is mostly
+parameter count, and SDXL has roughly 5x sd-turbo's.
 
-  1. **Seamless wrap.** The image is blended with its three half-offset copies
+A diffusion model does not produce a tiling texture, and a distilled model
+also is not reliably supersampled at its input resolution. So each image goes
+through four steps that matter more than the prompt:
+
+  1. **Render oversized.** Generated at 768px and Lanczos-downsampled to 512
+     at the very end, after every pixel-domain operation below. This is
+     ordinary supersampling: it costs one resize and buys back the aliasing a
+     single-step model leaves in fine grain (gravel, brush strokes, weave).
+
+  2. **Seamless wrap.** The image is blended with its three half-offset copies
      under cosine weights that share the tile's period. Each copy is weighted
      to zero exactly where its own seam falls, and periodic weights make the
      result continuous across the tile boundary by construction.
 
-  2. **Flatten the lighting.** Diffusion bakes light and shadow into the image.
+  3. **Flatten the lighting.** Diffusion bakes light and shadow into the image.
      Baked light on a surface that the engine is also lighting reads as dirt
      that moves wrongly, so a heavy blur of the image is divided out, leaving
      the grain and discarding the illumination.
 
-  3. **Desaturate towards the palette.** The city runs a strict green/blue/
+  4. **Desaturate towards the palette.** The city runs a strict green/blue/
      purple script. A texture that arrives with its own colour opinion fights
      that, so albedo is pulled most of the way to greyscale and tinted in the
      engine instead.
 
-Output is 512px JPEG at quality 80 — roughly 60-90KB each. That is a real cost
-against a bundle that was previously 100% procedural, and the reason the count
-is kept to three.
+Output is 512px JPEG at quality 80 — roughly 60-100KB each. That is a real
+cost against a bundle that was previously 100% procedural, which is why the
+set is kept to the surfaces actually seen close up and tiled: road, concrete,
+metal trim, lounge decking, lounge cushions. Glossy car paint and low-poly
+foliage stay procedural on purpose — a photographic map on a smooth painted
+panel or on an icosahedron's default UVs would look worse, not better.
 """
 import sys
 from pathlib import Path
@@ -34,7 +51,10 @@ import torch
 from PIL import Image, ImageFilter
 from diffusers import AutoPipelineForText2Image
 
-MODEL = "stabilityai/sd-turbo"
+MODEL = "stabilityai/sdxl-turbo"
+GEN_SIZE = 768   # rendered resolution, before downsampling
+OUT_SIZE = 512   # shipped resolution
+STEPS = 2
 OUT = Path("public/textures")
 
 # Prompts are written for *flat, evenly lit, top-down* surfaces. Anything that
@@ -44,17 +64,27 @@ TEXTURES = {
     "asphalt": (
         "flat overhead photograph of worn wet asphalt road surface, fine gravel "
         "aggregate, evenly lit, no shadows, no markings, no perspective, "
-        "seamless texture, macro detail"
+        "seamless texture, macro detail, 8k"
     ),
     "concrete": (
         "flat overhead photograph of raw poured concrete slab, subtle pitting "
         "and fine cracks, evenly lit, no shadows, no perspective, seamless "
-        "texture, macro detail"
+        "texture, macro detail, 8k"
     ),
     "panel": (
         "flat overhead photograph of brushed dark metal panel, fine horizontal "
         "brush grain, subtle scratches, evenly lit, no shadows, no perspective, "
-        "seamless texture, macro detail"
+        "seamless texture, macro detail, 8k"
+    ),
+    "wood": (
+        "flat overhead photograph of dark stained oak deck planking, fine wood "
+        "grain, subtle weathering, evenly lit, no shadows, no perspective, "
+        "seamless texture, macro detail, 8k"
+    ),
+    "fabric": (
+        "flat overhead photograph of woven upholstery fabric, fine cross weave "
+        "texture, soft lounge cushion material, evenly lit, no shadows, no "
+        "perspective, seamless texture, macro detail, 8k"
     ),
 }
 
@@ -134,15 +164,20 @@ def main() -> int:
         print(f"  {name}...", flush=True)
         image = pipe(
             prompt=prompt,
-            num_inference_steps=4,
+            num_inference_steps=STEPS,
             guidance_scale=0.0,
-            height=512,
-            width=512,
+            height=GEN_SIZE,
+            width=GEN_SIZE,
         ).images[0]
 
         image = flatten_lighting(image)
         image = make_seamless(image)
         image = toward_grey(image)
+        # Downsample last: every op above works in the pixel domain, so doing
+        # this first would just make them operate on fewer samples. Doing it
+        # last is what actually buys back the aliasing sdxl-turbo's 2-step
+        # sampling leaves in fine grain.
+        image = image.resize((OUT_SIZE, OUT_SIZE), Image.LANCZOS)
 
         path = OUT / f"{name}.jpg"
         image.save(path, quality=80, optimize=True)
