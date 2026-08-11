@@ -27,13 +27,14 @@ const FRAG = /* glsl */ `
   #include <common>
 
   uniform sampler2D uMap;
+  uniform float uIntensity;
 
   varying vec2 vUv;
   varying vec3 vColor;
   varying float vOpacity;
 
   void main() {
-    float a = texture2D(uMap, vUv).r * vOpacity;
+    float a = texture2D(uMap, vUv).r * vOpacity * uIntensity;
     if (a < 0.002) discard;
     // Premultiplied against additive blending: the alpha channel is unused by
     // the blend, so the colour carries the whole falloff.
@@ -61,10 +62,17 @@ const FRAG = /* glsl */ `
  * registered, then animate through the returned handles.
  */
 export class GlowField {
-  constructor(texture) {
+  constructor(texture, intensity = 1) {
     this.texture = texture;
     this._entries = [];
     this.mesh = null;
+    this._intensity = intensity;
+  }
+
+  /** Global multiplier, driven live from the graphics settings. */
+  setIntensity(v) {
+    this._intensity = v;
+    if (this.mesh) this.mesh.material.uniforms.uIntensity.value = v;
   }
 
   /** Reserve a glow. Returns a handle for animating it after build(). */
@@ -115,7 +123,10 @@ export class GlowField {
     const mat = new THREE.ShaderMaterial({
       vertexShader: VERT,
       fragmentShader: FRAG,
-      uniforms: { uMap: { value: this.texture } },
+      uniforms: {
+        uMap: { value: this.texture },
+        uIntensity: { value: this._intensity },
+      },
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,

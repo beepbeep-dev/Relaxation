@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { PALETTE } from './palette.js';
 
 /**
  * All textures are generated at runtime on a 2D canvas. No image downloads,
@@ -74,11 +75,14 @@ export function normalTexture(size = 256, strength = 2.0, opts) {
 }
 
 /**
- * Window grid used as an emissive mask on tower facades. Lit cells are random
- * and warm; a proportion stay dark so the buildings read as occupied rather
- * than as a uniform light box.
+ * Window grid used as an emissive mask on tower facades.
+ *
+ * Two passes beyond a plain grid, both cheap and both worth it: some floors
+ * are lit as a whole run (an office corridor), and a minority of windows get a
+ * brighter inner core (a lamp near the glass). Without them a facade reads as
+ * noise rather than as a building with people in it.
  */
-export function facadeTexture(size = 512, { cols = 16, rows = 24, lit = 0.42, seed = 7 } = {}) {
+export function facadeTexture(size = 512, { cols = 18, rows = 28, lit = 0.4, seed = 7 } = {}) {
   const { c, ctx } = canvas(size);
   let s = seed;
   const rand = () => (s = (s * 48271) % 2147483647) / 2147483647;
@@ -88,14 +92,24 @@ export function facadeTexture(size = 512, { cols = 16, rows = 24, lit = 0.42, se
 
   const cw = size / cols;
   const ch = size / rows;
-  const warm = ['#ffd9a8', '#ffc27a', '#fff0d4', '#9fd4ff', '#ffb488'];
+  const tint = PALETTE.windows;
 
   for (let y = 0; y < rows; y++) {
+    const floorLit = rand() < 0.16;
     for (let x = 0; x < cols; x++) {
-      if (rand() > lit) continue;
-      ctx.fillStyle = warm[(rand() * warm.length) | 0];
-      ctx.globalAlpha = 0.55 + rand() * 0.45;
-      ctx.fillRect(x * cw + cw * 0.22, y * ch + ch * 0.24, cw * 0.56, ch * 0.46);
+      if (!floorLit && rand() > lit) continue;
+      ctx.fillStyle = tint[(rand() * tint.length) | 0];
+      ctx.globalAlpha = floorLit ? 0.45 + rand() * 0.25 : 0.5 + rand() * 0.5;
+      const px = x * cw + cw * 0.2;
+      const py = y * ch + ch * 0.22;
+      const pw = cw * 0.6;
+      const ph = ch * 0.5;
+      ctx.fillRect(px, py, pw, ph);
+
+      if (rand() < 0.18) {
+        ctx.globalAlpha = 1;
+        ctx.fillRect(px + pw * 0.25, py + ph * 0.2, pw * 0.5, ph * 0.55);
+      }
     }
   }
   ctx.globalAlpha = 1;
@@ -118,8 +132,8 @@ export function glowTexture(size = 128) {
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const d = Math.hypot(x + 0.5 - half, y + 0.5 - half) / half;
-      // Tight inverse-square-ish core with a hard cut at the quad edge, so the
-      // quad's square boundary is never visible.
+      // Tight core with a hard cut at the quad edge, so the quad's square
+      // boundary is never visible.
       const core = Math.max(0, 1 - d);
       const a = Math.pow(core, 3.2) * 0.85 + Math.pow(core, 12) * 0.15;
       const v = Math.round(Math.min(1, a) * 255);
@@ -134,6 +148,35 @@ export function glowTexture(size = 128) {
   return t;
 }
 
+/**
+ * Puddle mask driving roughness on the road. Standing water is patchy, and a
+ * uniformly mirrored street reads as polished stone rather than as wet ground.
+ */
+export function puddleTexture(size = 256) {
+  const { c, ctx } = canvas(size);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+  let s = 991;
+  const rand = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  ctx.filter = 'blur(5px)';
+  for (let i = 0; i < 80; i++) {
+    const r = size * (0.02 + rand() * 0.07);
+    // Dark in the mask == low roughness == glossy puddle.
+    ctx.fillStyle = `rgba(0,0,0,${0.5 + rand() * 0.5})`;
+    ctx.beginPath();
+    ctx.ellipse(rand() * size, rand() * size, r, r * (0.5 + rand()), rand() * 6.28, 0, 6.28);
+    ctx.fill();
+  }
+  ctx.filter = 'none';
+  // Repeat is set against the *ground plane's* extent, which is several
+  // hundred metres. At a low repeat each "puddle" ends up tens of metres
+  // across and the road reads as one uniform sheet mirroring the sky, which is
+  // exactly the failure this mask exists to prevent.
+  return finish(c, { repeat: 48 });
+}
+
+const col = (hex) => new THREE.Color(hex);
+
 let cache = null;
 
 export function library() {
@@ -141,74 +184,74 @@ export function library() {
 
   const concreteRough = roughnessTexture(256, { cells: 18, contrast: 0.8, seed: 3, repeat: 4 });
   const concreteNormal = normalTexture(256, 1.6, { cells: 18, contrast: 0.8, seed: 3, repeat: 4 });
-  const groundRough = roughnessTexture(256, { cells: 30, contrast: 1.3, seed: 11, repeat: 26 });
-  const groundNormal = normalTexture(256, 2.4, { cells: 30, contrast: 1.3, seed: 11, repeat: 26 });
+  const groundNormal = normalTexture(256, 2.4, { cells: 30, contrast: 1.3, seed: 11, repeat: 70 });
+  const puddles = puddleTexture();
 
   cache = {
     glow: glowTexture(),
     facade: facadeTexture(),
+    facadeAlt: facadeTexture(512, { cols: 12, rows: 20, lit: 0.3, seed: 31 }),
+    puddles,
 
-    // Wet asphalt. Low roughness plus the baked env map is what produces the
-    // long vertical neon smears on the street.
+    // Wet asphalt, not a mirror. envMapIntensity is deliberately low: the
+    // baked environment is dominated by a bright saturated horizon band, and
+    // at anything near 1.0 the road stops being a surface and becomes a
+    // reflection of the sky's single strongest colour.
     wetGround: new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#0a0c12'),
-      roughness: 0.34,
-      metalness: 0.5,
-      roughnessMap: groundRough,
+      color: col(PALETTE.wetGround),
+      roughness: 0.6,
+      metalness: 0.22,
+      roughnessMap: puddles,
       normalMap: groundNormal,
-      normalScale: new THREE.Vector2(0.15, 0.15),
-      envMapIntensity: 0.7,
+      normalScale: new THREE.Vector2(0.4, 0.4),
+      envMapIntensity: 0.5,
     }),
 
     concrete: new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#2b2f3a'),
+      color: col(PALETTE.concrete),
       roughness: 0.82,
       metalness: 0.05,
       roughnessMap: concreteRough,
       normalMap: concreteNormal,
       normalScale: new THREE.Vector2(0.7, 0.7),
-      envMapIntensity: 0.9,
+      envMapIntensity: 0.55,
     }),
 
     darkMetal: new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#161a24'),
+      color: col(PALETTE.darkMetal),
       roughness: 0.38,
       metalness: 0.85,
       envMapIntensity: 1.2,
     }),
 
     glass: new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#0d1524'),
+      color: col(PALETTE.glass),
       roughness: 0.08,
       metalness: 1.0,
       envMapIntensity: 2.0,
     }),
 
-    warmWood: new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#4a2f22'),
+    deckWood: new THREE.MeshStandardMaterial({
+      color: col(PALETTE.deckWood),
       roughness: 0.62,
       metalness: 0.0,
       envMapIntensity: 0.8,
     }),
+
+    cushion: new THREE.MeshStandardMaterial({
+      color: col(PALETTE.cushion),
+      roughness: 0.92,
+      metalness: 0.0,
+    }),
+
+    foliage: new THREE.MeshStandardMaterial({
+      color: col('#1d6b52'),
+      roughness: 0.85,
+      metalness: 0.0,
+      envMapIntensity: 0.7,
+    }),
   };
   return cache;
-}
-
-/** Unlit additive billboard — our stand-in for a bloom pass. */
-export function glowSprite(color, scale, tex, opacity = 1) {
-  const mat = new THREE.SpriteMaterial({
-    map: tex,
-    color,
-    transparent: true,
-    opacity,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    toneMapped: false,
-    fog: false,
-  });
-  const s = new THREE.Sprite(mat);
-  s.scale.setScalar(scale);
-  return s;
 }
 
 /** Emissive surface that survives tone mapping as a believable light source. */
@@ -220,5 +263,19 @@ export function neonMaterial(color, intensity = 3) {
     roughness: 1,
     metalness: 0,
     toneMapped: true,
+  });
+}
+
+/**
+ * Unlit vertex-coloured material for merged self-lit geometry — signage, strip
+ * lighting, anything whose job is to be bright rather than to be lit. One of
+ * these over a merged buffer replaces one draw call per sign.
+ */
+export function emissiveVertexMaterial() {
+  return new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    toneMapped: true,
+    fog: true,
   });
 }

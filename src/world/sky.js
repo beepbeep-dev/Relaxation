@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { QUALITY } from '../core/quality.js';
+import { PALETTE } from './palette.js';
 
 const skyVert = /* glsl */ `
   varying vec3 vDir;
@@ -10,7 +11,7 @@ const skyVert = /* glsl */ `
 `;
 
 // Analytic dusk gradient. Cheaper and more art-directable than a physical sky
-// model, and we only need one hour of one day: permanent golden hour.
+// model, and we only need one hour of one day.
 const skyFrag = /* glsl */ `
   varying vec3 vDir;
   uniform vec3 uZenith;
@@ -19,23 +20,41 @@ const skyFrag = /* glsl */ `
   uniform vec3 uGround;
   uniform vec3 uSunDir;
   uniform vec3 uSunColor;
+  uniform float uTime;
+
+  // Cheap hash-based star field. No texture, no geometry, no draw call.
+  float hash21(vec2 p) {
+    p = fract(p * vec2(233.34, 851.73));
+    p += dot(p, p + 23.45);
+    return fract(p.x * p.y);
+  }
 
   void main() {
     vec3 d = normalize(vDir);
-
     float h = d.y;
     float up = clamp(1.0 - max(h, 0.0), 0.0, 1.0);
 
-    // Three-stop ramp with a *very* steep horizon term. The warm colour is
-    // roughly two orders of magnitude brighter in red than the zenith is in
-    // any channel, so a gentle falloff bleeds red across the entire dome and
-    // the whole city ends up sitting inside a furnace. The exponent has to be
-    // steep enough to confine it to a band just above the skyline.
+    // Three-stop ramp with a *very* steep horizon term. The horizon colour is
+    // far brighter than the zenith in at least one channel, so a gentle
+    // falloff bleeds it across the entire dome and the whole city ends up
+    // sitting in one flat wash. The exponent confines it to a band just above
+    // the skyline.
     vec3 col = mix(uZenith, uMid, pow(up, 2.5));
     col = mix(col, uHorizon, pow(up, 9.0));
     col = mix(col, uGround, clamp(-h * 3.0, 0.0, 1.0));
 
-    // Sun disc plus a wide forward-scatter halo.
+    // Stars, fading out towards the bright horizon band.
+    vec2 sp = d.xz / max(abs(d.y) + 0.28, 0.001);
+    vec2 cell = floor(sp * 42.0);
+    float star = hash21(cell);
+    if (star > 0.9915 && h > 0.02) {
+      vec2 f = fract(sp * 42.0) - 0.5;
+      float tw = 0.65 + 0.35 * sin(uTime * 1.7 + star * 90.0);
+      float s = smoothstep(0.14, 0.0, length(f)) * tw;
+      col += vec3(0.75, 0.85, 1.0) * s * smoothstep(0.02, 0.55, h) * 0.9;
+    }
+
+    // Sun disc plus a tight forward-scatter halo.
     float sun = max(dot(d, normalize(uSunDir)), 0.0);
     col += uSunColor * pow(sun, 1400.0) * 5.0;
     col += uSunColor * pow(sun, 22.0) * 0.16;
@@ -50,24 +69,32 @@ const skyFrag = /* glsl */ `
   }
 `;
 
-export const SUN_DIRECTION = new THREE.Vector3(-0.55, 0.16, -0.82).normalize();
+// Elevation matters more than it looks. At 0.16 the key light grazes the
+// ground so shallowly that N·L is near zero and the street is lit *entirely*
+// by the environment map — which, with a saturated horizon, paints the whole
+// road one flat colour. Lifting it to 0.3 keeps the low dusk angle on the
+// tower faces while actually keying the ground.
+export const SUN_DIRECTION = new THREE.Vector3(-0.55, 0.3, -0.78).normalize();
+
+const linear = (hex) => new THREE.Color(hex).convertSRGBToLinear();
 
 /**
  * Builds the skydome and bakes it into a PMREM environment map.
  *
  * The env map is what actually sells the materials: every metal and wet
  * surface in the city gets its reflections from this one texture, so a single
- * 128px cubemap replaces what would otherwise be reflection probes we cannot
- * afford on a standalone headset.
+ * small cubemap replaces reflection probes we cannot afford on a standalone
+ * headset.
  */
 export function createSky(renderer, scene) {
   const uniforms = {
-    uZenith: { value: new THREE.Color('#0b1430').convertSRGBToLinear() },
-    uMid: { value: new THREE.Color('#37507f').convertSRGBToLinear() },
-    uHorizon: { value: new THREE.Color('#ffab6b').convertSRGBToLinear() },
-    uGround: { value: new THREE.Color('#080a11').convertSRGBToLinear() },
+    uZenith: { value: linear(PALETTE.skyZenith) },
+    uMid: { value: linear(PALETTE.skyMid) },
+    uHorizon: { value: linear(PALETTE.skyHorizon) },
+    uGround: { value: linear(PALETTE.skyGround) },
     uSunDir: { value: SUN_DIRECTION.clone() },
-    uSunColor: { value: new THREE.Color('#ffb27a').convertSRGBToLinear() },
+    uSunColor: { value: linear(PALETTE.sunColor) },
+    uTime: { value: 0 },
   };
 
   const sky = new THREE.Mesh(
@@ -102,14 +129,19 @@ export function createSky(renderer, scene) {
   bakeSky.material.dispose();
 
   // Distance fog does the heavy lifting for depth separation between towers.
-  scene.fog = new THREE.FogExp2(new THREE.Color('#16203c').convertSRGBToLinear(), 0.0052);
+  scene.fog = new THREE.FogExp2(linear(PALETTE.fog), QUALITY.fogDensity);
 
-  return { sky, uniforms, envMap: envRT.texture };
+  return {
+    sky,
+    uniforms,
+    envMap: envRT.texture,
+    update(dt, ctx) { uniforms.uTime.value = ctx.elapsed; },
+  };
 }
 
-/** Key light + fill. Four lights total is the whole budget for the city. */
+/** Key light + fill. Two lights is the whole budget for the city. */
 export function createLighting(scene) {
-  const sun = new THREE.DirectionalLight(new THREE.Color('#ffd0ac'), 1.5);
+  const sun = new THREE.DirectionalLight(linear(PALETTE.keyLight), 2.2);
   sun.position.copy(SUN_DIRECTION).multiplyScalar(140);
   sun.castShadow = QUALITY.shadows;
   if (QUALITY.shadows) {
@@ -123,12 +155,17 @@ export function createLighting(scene) {
   scene.add(sun);
   scene.add(sun.target);
 
-  // Cool sky bounce against the warm key — the colour contrast reads as
-  // "expensive" far more than extra light count would.
+  // Green bounce from the horizon against purple bounce from the wet street.
+  // The hue spread between them is what stops unlit surfaces reading as grey;
+  // it replaces the warm/cool split a daylight scene would normally use.
+  // Kept low on purpose. A hemisphere light tints *every* upward-facing
+  // surface, so a saturated green fill at any real intensity turns the whole
+  // street into a lawn. It is here for hue separation in shadow, not for
+  // brightness — the key light and the emissive city do the lifting.
   const fill = new THREE.HemisphereLight(
-    new THREE.Color('#7396d8'),
-    new THREE.Color('#1c1620'),
-    0.85
+    linear(PALETTE.fillSky),
+    linear(PALETTE.fillGround),
+    0.42
   );
   scene.add(fill);
 

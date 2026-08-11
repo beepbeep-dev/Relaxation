@@ -30,6 +30,13 @@ const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
 page.on('pageerror', (e) => console.error('PAGEERROR', String(e)));
 page.on('console', (m) => { if (m.type() === 'error') console.error('CONSOLE', m.text()); });
 
+// Pin the preset before the app boots: build-time settings (city density,
+// draw distance, texture sizes) are read once at construction, so setting
+// them after load would not affect the world being photographed.
+const PRESET = process.env.PRESET || 'balanced';
+await page.addInitScript((preset) => {
+  localStorage.setItem('kaisei.settings.v1', JSON.stringify({ preset }));
+}, PRESET);
 await page.goto(`http://localhost:${server.address().port}/`, { waitUntil: 'load' });
 await page.waitForFunction(() => !!window.__kaisei, null, { timeout: 45000 });
 await page.waitForFunction(() => !document.getElementById('enter').disabled);
@@ -41,6 +48,7 @@ console.log(await page.evaluate(() => {
   const k = window.__kaisei;
   const sky = k.engine.scene.children.find((c) => c.material?.type === 'ShaderMaterial' && c.geometry?.type === 'SphereGeometry');
   return {
+    preset: k.settings.values.preset,
     skyFound: !!sky,
     skyVisible: sky?.visible,
     skyScale: sky?.scale.x,
@@ -50,6 +58,10 @@ console.log(await page.evaluate(() => {
     fog: k.engine.scene.fog ? { type: k.engine.scene.fog.type ?? 'FogExp2', density: k.engine.scene.fog.density } : null,
     cameraFar: k.engine.camera.far,
     exposure: k.engine.renderer.toneMappingExposure,
+    cityBlocks: k.quality.cityBlocks,
+    propDensity: k.quality.propDensity,
+    sunIntensity: +k.sun.intensity.toFixed(2),
+    drawCalls: k.engine.renderer.info.render.calls,
   };
 }));
 

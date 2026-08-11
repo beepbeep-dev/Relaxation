@@ -9,38 +9,137 @@
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#127961;</text></svg>"
     />
     <style>
-      :root { color-scheme: dark; }
+      /* The 2D chrome runs the same green / blue / purple script as the world,
+         so the boot screen is not a different product from the city. */
+      :root {
+        color-scheme: dark;
+        --green: #3dffa8;
+        --blue: #48d6ff;
+        --purple: #b98cff;
+        --ink: #e4ecf8;
+        --dim: #8ea3c8;
+        --line: #2a2350;
+        --panel: #0d0a1e;
+      }
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body { height: 100%; overflow: hidden; background: #05060b; }
+      html, body { height: 100%; overflow: hidden; background: #05040d; }
       body {
         font: 400 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-        color: #e8ecf5;
+        color: var(--ink);
       }
       canvas { display: block; }
 
+      /* ---------------------------------------------------------- boot */
       #boot {
         position: fixed; inset: 0; z-index: 10;
         display: flex; flex-direction: column; align-items: center; justify-content: center;
-        gap: 22px; text-align: center; padding: 32px;
-        background: radial-gradient(120% 90% at 50% 15%, #16233f 0%, #080a12 55%, #04050a 100%);
+        gap: 20px; text-align: center; padding: 32px;
+        background: radial-gradient(120% 90% at 50% 20%, #1d2a5e 0%, #120b2c 50%, #05040d 100%);
         transition: opacity .8s ease;
+        overflow-y: auto;
       }
       #boot.gone { opacity: 0; pointer-events: none; }
       #boot h1 {
         font-size: clamp(30px, 7vw, 54px); font-weight: 200; letter-spacing: .42em;
-        text-indent: .42em; color: #fff;
+        text-indent: .42em;
+        background: linear-gradient(100deg, var(--green), var(--blue) 45%, var(--purple));
+        -webkit-background-clip: text; background-clip: text; color: transparent;
       }
-      #boot .sub { color: #8b9ab8; letter-spacing: .22em; text-transform: uppercase; font-size: 12px; }
-      #bar { width: min(320px, 70vw); height: 2px; background: #1e293f; overflow: hidden; }
-      #bar i { display: block; height: 100%; width: 0%; background: #ff7a45; transition: width .3s ease; }
+      #boot .sub { color: var(--dim); letter-spacing: .22em; text-transform: uppercase; font-size: 12px; }
+      #bar { width: min(320px, 70vw); height: 2px; background: #1c1740; overflow: hidden; }
+      #bar i {
+        display: block; height: 100%; width: 0%;
+        background: linear-gradient(90deg, var(--green), var(--blue), var(--purple));
+        transition: width .3s ease;
+      }
       #enter {
-        appearance: none; border: 1px solid #ff7a45; background: transparent; color: #ff9c6e;
+        appearance: none; border: 1px solid var(--green); background: transparent; color: var(--green);
         padding: 14px 34px; font: inherit; letter-spacing: .2em; text-transform: uppercase;
         font-size: 13px; cursor: pointer; transition: background .2s, color .2s; border-radius: 2px;
       }
-      #enter:hover:not(:disabled) { background: #ff7a45; color: #120a06; }
-      #enter:disabled { opacity: .35; cursor: default; border-color: #44506a; color: #8b9ab8; }
-      #hint { color: #6d7c99; font-size: 13px; max-width: 42ch; }
+      #enter:hover:not(:disabled) { background: var(--green); color: #04120c; }
+      #enter:disabled { opacity: .35; cursor: default; border-color: #3d3768; color: var(--dim); }
+      #hint { color: var(--dim); font-size: 13px; max-width: 52ch; }
+
+      #boot-settings-toggle {
+        appearance: none; background: none; border: none; color: var(--purple);
+        font: inherit; font-size: 13px; cursor: pointer; text-decoration: underline;
+        text-underline-offset: 4px; padding: 4px;
+      }
+      #boot-settings { display: none; width: min(560px, 92vw); }
+      #boot-settings.open { display: block; }
+
+      /* ------------------------------------------------- settings panel */
+      .settings-panel { text-align: left; font-size: 13px; }
+      .sp-presets { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 18px; }
+      .sp-preset {
+        appearance: none; background: #120e2a; border: 1px solid var(--line); color: var(--ink);
+        padding: 10px 12px; border-radius: 4px; cursor: pointer; text-align: left;
+        display: flex; flex-direction: column; gap: 3px; font: inherit; transition: border-color .15s;
+      }
+      .sp-preset:hover { border-color: var(--blue); }
+      .sp-preset.active { border-color: var(--green); background: #0f2320; }
+      .sp-preset strong { font-size: 13px; font-weight: 600; }
+      .sp-preset span { font-size: 11px; color: var(--dim); line-height: 1.35; }
+
+      .sp-section { margin-bottom: 16px; }
+      .sp-section h3 {
+        font-size: 10px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase;
+        color: var(--purple); margin-bottom: 8px; padding-bottom: 6px;
+        border-bottom: 1px solid var(--line);
+      }
+      .sp-row {
+        display: grid; grid-template-columns: 1fr 150px 62px; align-items: center;
+        gap: 12px; padding: 5px 0;
+      }
+      .sp-name { color: var(--ink); }
+      .sp-name[title] { cursor: help; border-bottom: 1px dotted #4a4270; }
+      .sp-value { color: var(--blue); font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; }
+      .sp-row input[type="range"] { width: 100%; accent-color: var(--green); }
+      .sp-row input[type="checkbox"] { justify-self: start; accent-color: var(--green); width: 16px; height: 16px; }
+      .sp-row select {
+        background: #120e2a; color: var(--ink); border: 1px solid var(--line);
+        border-radius: 3px; padding: 3px 6px; font: inherit; font-size: 12px; width: 100%;
+      }
+
+      .sp-banner {
+        display: none; align-items: center; justify-content: space-between; gap: 12px;
+        background: #1c1440; border: 1px solid var(--purple); border-radius: 4px;
+        padding: 9px 12px; font-size: 12px; color: var(--ink);
+      }
+      .sp-banner.show { display: flex; }
+      .sp-banner button {
+        appearance: none; background: var(--purple); border: none; color: #150a28;
+        font: inherit; font-size: 12px; font-weight: 600; padding: 5px 12px;
+        border-radius: 3px; cursor: pointer;
+      }
+
+      /* ------------------------------------------------ overlay + stats */
+      .settings-overlay {
+        position: fixed; inset: 0; z-index: 20; display: none;
+        align-items: center; justify-content: center; padding: 24px;
+        background: rgba(4, 3, 12, .72); backdrop-filter: blur(6px);
+      }
+      .settings-overlay.show { display: flex; }
+      .so-card {
+        width: min(600px, 94vw); max-height: 88vh; overflow-y: auto;
+        background: var(--panel); border: 1px solid var(--line);
+        border-radius: 8px; padding: 20px 22px;
+      }
+      .so-card header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+      .so-card h2 { font-size: 16px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--green); }
+      .so-card header button {
+        appearance: none; background: none; border: none; color: var(--dim);
+        font-size: 24px; line-height: 1; cursor: pointer; padding: 0 4px;
+      }
+
+      .stats-readout {
+        position: fixed; top: 10px; left: 12px; z-index: 5; display: none;
+        font: 400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--green); background: rgba(6, 5, 18, .68);
+        padding: 5px 9px; border-radius: 3px; pointer-events: none;
+        border: 1px solid var(--line);
+      }
     </style>
   </head>
   <body>
@@ -49,7 +148,9 @@
       <div class="sub">Relaxation</div>
       <div id="bar"><i></i></div>
       <button id="enter" disabled>Loading</button>
-      <p id="hint">Open this page in the Quest 3 browser and press Enter VR. On desktop: WASD to walk, mouse to look, click to capture.</p>
+      <p id="hint">Open this page in the Quest 3 browser and press Enter VR.</p>
+      <button id="boot-settings-toggle" type="button">Graphics settings</button>
+      <div id="boot-settings"></div>
     </div>
     <script type="module" src="/src/main.js"></script>
   </body>

@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import { QUALITY } from '../core/quality.js';
-import { library, glowSprite, neonMaterial } from '../world/materials.js';
+import { library, neonMaterial } from '../world/materials.js';
+import { PALETTE } from '../world/palette.js';
 import { makeRNG, range } from '../core/rng.js';
+
+const UP = new THREE.Vector3(0, 1, 0);
 
 const LAPS = 3;
 const TRACK_HALF_WIDTH = 7.5;
@@ -11,9 +14,9 @@ const BOOST_GAIN = 16;
 
 // Gate ring tints, written straight into instanceColor. Deliberately over 1.0
 // on the lit states: the tone mapper turns the overshoot into a hot core.
-const GATE_IDLE = new THREE.Color('#3dffa8').convertSRGBToLinear().multiplyScalar(3.2);
-const GATE_HIT = new THREE.Color('#eaffef').convertSRGBToLinear().multiplyScalar(9.0);
-const GATE_MISS = new THREE.Color('#3dffa8').convertSRGBToLinear().multiplyScalar(0.35);
+const GATE_IDLE = new THREE.Color(PALETTE.gate).convertSRGBToLinear().multiplyScalar(3.2);
+const GATE_HIT = new THREE.Color('#e8fff4').convertSRGBToLinear().multiplyScalar(9.0);
+const GATE_MISS = new THREE.Color(PALETTE.gate).convertSRGBToLinear().multiplyScalar(0.35);
 
 /**
  * NEON LINE — the racing game.
@@ -49,6 +52,18 @@ export class Racing {
     this._lapClock = 0;
     this._countdown = 0;
     this._bank = 0;
+
+    // Scratch objects for the per-frame path. Allocating vectors and
+    // quaternions inside _place() is garbage at 90Hz, and a GC pause is
+    // visible as a hitch when you are moving at 60 m/s.
+    this._scratch = {
+      pos: new THREE.Vector3(),
+      right: new THREE.Vector3(),
+      up: new THREE.Vector3(0, 1, 0),
+      euler: new THREE.Euler(0, 0, 0, 'YXZ'),
+      ghostEuler: new THREE.Euler(0, 0, 0, 'YXZ'),
+      curvePoint: new THREE.Vector3(),
+    };
 
     this._buildCurve();
     this._buildRibbon();
@@ -99,7 +114,7 @@ export class Racing {
   /** Right vector of the ribbon, flattened so lateral movement stays level. */
   _rightAt(t, out = new THREE.Vector3()) {
     const { tangent } = this._frameAt(t);
-    out.crossVectors(tangent, new THREE.Vector3(0, 1, 0)).normalize();
+    out.crossVectors(tangent, UP).normalize();
     if (out.lengthSq() < 1e-6) out.set(1, 0, 0);
     return out;
   }
@@ -131,7 +146,7 @@ export class Racing {
     geo.computeVertexNormals();
 
     const deck = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#0a0e18'),
+      color: new THREE.Color('#080c1c'),
       roughness: 0.28,
       metalness: 0.8,
       side: THREE.DoubleSide,
@@ -157,14 +172,14 @@ export class Racing {
       const railGeo = new THREE.TubeGeometry(
         new THREE.CatmullRomCurve3(railPts, true), segments, 0.14, 5, true
       );
-      const rail = new THREE.Mesh(railGeo, neonMaterial(side < 0 ? '#48d6ff' : '#ff4d6d', 3.4));
+      const rail = new THREE.Mesh(railGeo, neonMaterial(side < 0 ? PALETTE.railLeft : PALETTE.railRight, 3.4));
       this.group.add(rail);
     }
 
     // Centre dashes, so the player can read lateral drift without a HUD.
     const dash = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.24, 0.04, 3.0),
-      neonMaterial('#ffffff', 1.6),
+      neonMaterial('#dff7ff', 1.6),
       120
     );
     const m = new THREE.Matrix4();
@@ -225,7 +240,7 @@ export class Racing {
       m.compose(pos, q, one);
       rings.setMatrixAt(i, m);
 
-      const halo = this.glow.add(pos, '#3dffa8', 3.4, 0.5);
+      const halo = this.glow.add(pos, PALETTE.gate, 3.4, 0.5);
       this.gates.push({ t, offset, index: i, halo, taken: false, radius: 2.6 });
     }
     rings.instanceMatrix.needsUpdate = true;
@@ -270,7 +285,7 @@ export class Racing {
     const glassCowl = new THREE.Mesh(
       new THREE.BoxGeometry(1.1, 0.5, 0.08),
       new THREE.MeshStandardMaterial({
-        color: new THREE.Color('#0d1524'), roughness: 0.06, metalness: 1,
+        color: new THREE.Color('#0e1830'), roughness: 0.06, metalness: 1,
         transparent: true, opacity: 0.42, envMapIntensity: 2.5,
       })
     );
@@ -290,7 +305,16 @@ export class Racing {
     }
 
     // Thruster glow behind the seat.
-    this.thruster = glowSprite(new THREE.Color('#ff8a3d'), 1.2, this.mats.glow, 0.8);
+    this.thrusterMat = new THREE.MeshBasicMaterial({
+      map: this.mats.glow,
+      color: new THREE.Color(PALETTE.thruster),
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+      fog: false,
+    });
+    this.thruster = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.2), this.thrusterMat);
     this.thruster.position.set(0, 0.5, 0.9);
     this.cockpit.add(this.thruster);
 
@@ -298,7 +322,7 @@ export class Racing {
     this.ghostMesh = new THREE.Mesh(
       new THREE.BoxGeometry(1.4, 0.4, 2.4),
       new THREE.MeshStandardMaterial({
-        color: new THREE.Color('#48d6ff'), emissive: new THREE.Color('#48d6ff'),
+        color: new THREE.Color(PALETTE.ghost), emissive: new THREE.Color(PALETTE.ghost),
         emissiveIntensity: 0.8, transparent: true, opacity: 0.28,
         roughness: 0.4, metalness: 0.2,
       })
@@ -334,30 +358,30 @@ export class Racing {
     c.clearRect(0, 0, 512, 256);
     c.fillStyle = 'rgba(6,10,18,0.82)';
     c.fillRect(0, 0, 512, 256);
-    c.strokeStyle = '#48d6ff';
+    c.strokeStyle = PALETTE.accentBlue;
     c.lineWidth = 3;
     c.strokeRect(6, 6, 500, 244);
 
-    c.fillStyle = '#e8f4ff';
+    c.fillStyle = '#eaf6ff';
     c.font = '600 30px ui-sans-serif, system-ui, sans-serif';
     c.textBaseline = 'top';
 
     if (this.state === 'countdown') {
       c.font = '700 96px ui-sans-serif, system-ui, sans-serif';
-      c.fillStyle = '#ff9c6e';
+      c.fillStyle = PALETTE.accentPurple;
       c.textAlign = 'center';
       c.fillText(Math.ceil(this._countdown) || 'GO', 256, 74);
       c.textAlign = 'left';
     } else if (this.state === 'finished') {
       c.textAlign = 'center';
-      c.fillStyle = '#3dffa8';
+      c.fillStyle = PALETTE.accentGreen;
       c.font = '700 46px ui-sans-serif, system-ui, sans-serif';
       c.fillText('FINISH', 256, 40);
-      c.fillStyle = '#e8f4ff';
+      c.fillStyle = '#eaf6ff';
       c.font = '500 28px ui-sans-serif, system-ui, sans-serif';
       c.fillText(fmt(this.lapTimes.reduce((a, b) => a + b, 0)), 256, 106);
       c.font = '400 20px ui-sans-serif, system-ui, sans-serif';
-      c.fillStyle = '#8fb0d8';
+      c.fillStyle = '#93b6dd';
       c.fillText('trigger to race again  ·  grip to leave', 256, 170);
       c.textAlign = 'left';
     } else {
@@ -366,16 +390,16 @@ export class Racing {
       c.fillText(fmt(this._lapClock), 26, 62);
 
       c.font = '400 20px ui-sans-serif, system-ui, sans-serif';
-      c.fillStyle = '#8fb0d8';
+      c.fillStyle = '#93b6dd';
       c.fillText(`BEST  ${this.best ? fmt(this.best) : '--:--.--'}`, 26, 128);
 
       // Speed bar.
       const frac = THREE.MathUtils.clamp(this.speed / MAX_SPEED, 0, 1);
-      c.fillStyle = '#12203a';
+      c.fillStyle = '#141d38';
       c.fillRect(26, 176, 460, 22);
-      c.fillStyle = this.boost > 0.1 ? '#3dffa8' : '#ff9c6e';
+      c.fillStyle = this.boost > 0.1 ? PALETTE.accentGreen : PALETTE.accentBlue;
       c.fillRect(26, 176, 460 * frac, 22);
-      c.fillStyle = '#e8f4ff';
+      c.fillStyle = '#eaf6ff';
       c.font = '600 22px ui-sans-serif, system-ui, sans-serif';
       c.fillText(`${Math.round(this.speed * 3.6)} KM/H`, 26, 210);
     }
@@ -528,18 +552,18 @@ export class Racing {
     this._drawHUD();
   }
 
-  /** Drive the rig from the track frame. */
+  /** Drive the rig from the track frame. Allocation-free. */
   _place() {
-    const p = this.curve.getPointAt(this.t);
-    const right = this._rightAt(this.t);
+    const sc = this._scratch;
+    const p = this.curve.getPointAt(this.t, sc.curvePoint);
+    const right = this._rightAt(this.t, sc.right);
     const { tangent } = this._frameAt(this.t);
 
-    const pos = new THREE.Vector3(
+    this.engine.rig.position.set(
       p.x + right.x * this.offset,
       p.y + 1.1,
       p.z + right.z * this.offset
     );
-    this.engine.rig.position.copy(pos);
 
     // Yaw only, plus a small cosmetic bank. Roll is capped low deliberately:
     // vestibular conflict scales with roll far faster than with yaw.
@@ -547,11 +571,12 @@ export class Racing {
     const targetBank = THREE.MathUtils.clamp(-(this._lateralVel ?? 0) * 0.02, -0.14, 0.14);
     this._bank = THREE.MathUtils.damp(this._bank, targetBank, 5, 1 / 72);
 
-    this.engine.rig.quaternion.setFromEuler(new THREE.Euler(0, yaw, this._bank, 'YXZ'));
+    sc.euler.set(0, yaw, this._bank);
+    this.engine.rig.quaternion.setFromEuler(sc.euler);
 
     // Thruster brightness tracks throttle.
     const f = THREE.MathUtils.clamp((this.speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED), 0, 1);
-    this.thruster.material.opacity = 0.45 + f * 0.55;
+    this.thrusterMat.opacity = 0.45 + f * 0.55;
     this.thruster.scale.setScalar(1.0 + f * 0.9);
   }
 
@@ -559,16 +584,16 @@ export class Racing {
     if (!this._ghost || !this._ghost.length) { this.ghostMesh.visible = false; return; }
     // Replay by index against the live recording, which keeps the ghost at the
     // same point in elapsed time rather than the same point on the track.
+    const sc = this._scratch;
     const i = Math.min(this._recording.length, this._ghost.length - 1);
     const [gt, go] = this._ghost[i];
-    const p = this.curve.getPointAt(gt);
-    const right = this._rightAt(gt);
+    const p = this.curve.getPointAt(gt, sc.pos);
+    const right = this._rightAt(gt, sc.right);
     const { tangent } = this._frameAt(gt);
     this.ghostMesh.visible = true;
     this.ghostMesh.position.set(p.x + right.x * go, p.y + 1.0, p.z + right.z * go);
-    this.ghostMesh.quaternion.setFromEuler(
-      new THREE.Euler(0, Math.atan2(tangent.x, tangent.z), 0)
-    );
+    sc.ghostEuler.set(0, Math.atan2(tangent.x, tangent.z), 0);
+    this.ghostMesh.quaternion.setFromEuler(sc.ghostEuler);
   }
 
   _input() {

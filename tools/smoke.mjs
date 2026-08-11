@@ -153,6 +153,64 @@ const audio = await page.evaluate(() => {
 });
 audio.started ? ok(`audio running (${audio.state}): ${audio.voices.join(', ')}`) : fail('audio never started');
 
+// --- graphics settings actually reach the renderer
+const settings = await page.evaluate(() => {
+  const k = window.__kaisei;
+  const before = {
+    exposure: k.engine.renderer.toneMappingExposure,
+    fog: k.engine.scene.fog.density,
+    far: k.engine.camera.far,
+    glow: k.glow.mesh.material.uniforms.uIntensity.value,
+    snap: k.player.snapAngle,
+  };
+
+  // Live settings must take effect without a reload.
+  k.settings.set('exposure', 1.35);
+  k.settings.set('fogDensity', 0.009);
+  k.settings.set('drawDistance', 600);
+  k.settings.set('glowIntensity', 0.4);
+  k.settings.set('snapDegrees', 45);
+  k.applyNow();
+
+  const after = {
+    exposure: k.engine.renderer.toneMappingExposure,
+    fog: k.engine.scene.fog.density,
+    far: k.engine.camera.far,
+    glow: k.glow.mesh.material.uniforms.uIntensity.value,
+    snap: k.player.snapAngle,
+  };
+
+  // A build-time setting must be staged for reload, not silently ignored.
+  k.settings.set('cityBlocks', 12);
+  const pendingAfterBuildTimeEdit = k.settings.needsReload;
+
+  // Presets must move every field, and survive a round trip through storage.
+  k.settings.applyPreset('high');
+  const preset = { name: k.settings.values.preset, blocks: k.settings.values.cityBlocks };
+  const reloaded = JSON.parse(localStorage.getItem('kaisei.settings.v1'));
+
+  return {
+    before, after, pendingAfterBuildTimeEdit, preset,
+    persistedPreset: reloaded.preset,
+    persistedBlocks: reloaded.cityBlocks,
+    panelRows: k.panel.el.querySelectorAll('.sp-row').length,
+    wristRows: k.wrist.rows.length,
+  };
+});
+
+console.log('\nsettings:', settings, '\n');
+settings.after.exposure === 1.35 ? ok('exposure applies live') : fail(`exposure did not apply (${settings.after.exposure})`);
+settings.after.fog === 0.009 ? ok('fog density applies live') : fail('fog did not apply');
+settings.after.far === 600 ? ok('draw distance applies live') : fail('draw distance did not apply');
+settings.after.glow === 0.4 ? ok('glow intensity applies live') : fail('glow did not apply');
+Math.abs(settings.after.snap - Math.PI / 4) < 1e-6 ? ok('snap turn angle applies live') : fail('snap angle did not apply');
+settings.pendingAfterBuildTimeEdit ? ok('build-time edits are staged for reload') : fail('build-time edit was not staged');
+settings.preset.blocks === 10 ? ok('preset moves build-time fields') : fail(`preset did not apply (${settings.preset.blocks})`);
+settings.persistedPreset === 'high' && settings.persistedBlocks === 10
+  ? ok('settings persist to storage') : fail('settings did not persist');
+settings.panelRows >= 15 ? ok(`settings panel built ${settings.panelRows} controls`) : fail('settings panel is empty');
+settings.wristRows >= 10 ? ok(`wrist panel built ${settings.wristRows} rows`) : fail('wrist panel is empty');
+
 // --- screenshots for eyeballing the look
 await page.evaluate(() => { if (window.__kaisei.racing.active) window.__kaisei.racing.exit(); });
 await page.waitForTimeout(600);

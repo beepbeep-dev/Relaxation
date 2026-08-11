@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { library, neonMaterial } from './materials.js';
+import { PALETTE } from './palette.js';
 
 /**
  * The launch pad in the plaza — how NEON LINE is entered.
@@ -27,7 +28,7 @@ export class RacePad {
     disc.position.y = 0.09;
     this.group.add(disc);
 
-    this.ringMat = neonMaterial('#3dffa8', 2.4);
+    this.ringMat = neonMaterial(PALETTE.accentGreen, 2.4);
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(this.radius - 0.25, 0.09, 6, 40),
       this.ringMat
@@ -39,14 +40,14 @@ export class RacePad {
     // Floating arc that spins up when the player steps on.
     this.arc = new THREE.Mesh(
       new THREE.TorusGeometry(1.9, 0.07, 6, 32, Math.PI * 1.35),
-      neonMaterial('#48d6ff', 3.0)
+      neonMaterial(PALETTE.accentBlue, 3.0)
     );
     this.arc.position.y = 2.6;
     this.arc.rotation.x = Math.PI / 2;
     this.group.add(this.arc);
 
     this.halo = glow.add(
-      this.position.clone().setY(1.2), '#3dffa8', 7, 0.22
+      this.position.clone().setY(1.2), PALETTE.accentGreen, 7, 0.22
     );
     this._haloOpacity = 0.22;
 
@@ -59,7 +60,7 @@ export class RacePad {
     const c = document.createElement('canvas');
     c.width = 512; c.height = 128;
     const ctx = c.getContext('2d');
-    ctx.fillStyle = '#3dffa8';
+    ctx.fillStyle = PALETTE.accentGreen;
     ctx.font = '600 64px ui-sans-serif, system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

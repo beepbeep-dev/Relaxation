@@ -23,14 +23,14 @@ export class Engine {
       stencil: false,
       depth: true,
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY.maxPixelRatio));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * QUALITY.renderScale);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
 
     // Filmic response curve + physical light falloff. This pair does more for
     // "modern AAA" read than any amount of geometry.
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.95;
+    this.renderer.toneMappingExposure = QUALITY.exposure;
 
     this.renderer.shadowMap.enabled = QUALITY.shadows;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -40,7 +40,7 @@ export class Engine {
     this.renderer.xr.setFoveation(QUALITY.foveation);
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 900);
+    this.camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, QUALITY.drawDistance);
     this.camera.position.set(0, 1.6, 0);
 
     // The XR rig. Locomotion moves this, never the camera — the camera is

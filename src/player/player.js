@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { XRControllerModelFactory } from 'three/examples/jsm/webxr/XRControllerModelFactory.js';
+import { PALETTE } from '../world/palette.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -18,7 +19,8 @@ export class Player {
     this.world = world;             // { colliders, platforms, ramps, seats }
 
     this.speed = 3.0;               // m/s, walking pace — deliberately not fast
-    this.snapAngle = Math.PI / 6;   // 30 degrees
+    this.snapAngle = Math.PI / 6;   // 30 degrees, overridden from settings
+    this.vignetteStrength = 0.55;   // overridden from settings
     this._snapCooldown = 0;
     this.seated = false;
 
@@ -31,6 +33,13 @@ export class Player {
     this._yaw = 0;
     this._pitch = 0;
     this._moveAmount = 0;
+
+    // Scratch vectors for the movement path. A `new THREE.Vector3()` per frame
+    // is garbage at 90Hz, and mobile GC pauses read as hitches in a headset.
+    this._forward = new THREE.Vector3();
+    this._right = new THREE.Vector3();
+    this._step = new THREE.Vector3();
+    this._next = new THREE.Vector3();
 
     this._setupControllers();
     this._setupDesktop();
@@ -50,7 +59,8 @@ export class Player {
       const ray = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]),
         new THREE.LineBasicMaterial({
-          color: 0xff9c6e, transparent: true, opacity: 0.35, toneMapped: false,
+          color: new THREE.Color(PALETTE.accentPurple),
+          transparent: true, opacity: 0.35, toneMapped: false,
         })
       );
       ray.scale.z = 1.2;
@@ -64,14 +74,12 @@ export class Player {
       ctrl.addEventListener('disconnected', () => {
         ctrl.userData.gamepad = null;
       });
-      ctrl.addEventListener('selectstart', () => this._onSelect(ctrl));
-
       this._controllers.push(ctrl);
     }
   }
 
-  _onSelect(ctrl) {
-    // Trigger near a cushion sits you down; trigger again stands you up.
+  /** Trigger near a cushion sits you down; trigger again stands you up. */
+  trySit() {
     if (this.seated) { this.stand(); return; }
     const head = this.engine.headPosition();
     let best = null;
@@ -208,7 +216,7 @@ export class Player {
     }
 
     // Move relative to gaze in XR, relative to yaw on desktop.
-    const forward = new THREE.Vector3();
+    const forward = this._forward;
     if (xr) {
       this.camera.getWorldDirection(forward);
     } else {
@@ -217,16 +225,17 @@ export class Player {
     forward.y = 0;
     if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
     forward.normalize();
-    const right = new THREE.Vector3().crossVectors(forward, UP).normalize().negate();
+    const right = this._right.crossVectors(forward, UP).normalize().negate();
 
-    const step = new THREE.Vector3()
+    const step = this._step
+      .set(0, 0, 0)
       .addScaledVector(forward, -moveZ)
       .addScaledVector(right, -moveX);
 
     const mag = Math.min(step.length(), 1);
     if (mag > 0.001) {
       step.normalize().multiplyScalar(this.speed * mag * dt);
-      const next = this.rig.position.clone().add(step);
+      const next = this._next.copy(this.rig.position).add(step);
       this._resolveCollisions(next);
       this.rig.position.x = next.x;
       this.rig.position.z = next.z;
@@ -247,7 +256,7 @@ export class Player {
 
     // Vignette tracks actual movement, and eases so it never pops.
     this._moveAmount = THREE.MathUtils.damp(this._moveAmount, mag, 8, dt);
-    this.vignette.material.opacity = this._moveAmount * 0.55;
+    this.vignette.material.opacity = this._moveAmount * this.vignetteStrength;
 
     if (!xr) this._applyDesktopLook();
   }
