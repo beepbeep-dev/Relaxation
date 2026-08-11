@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { QUALITY } from '../core/quality.js';
 import { makeRNG, range, pick } from '../core/rng.js';
 import { library, neonMaterial, emissiveVertexMaterial } from './materials.js';
+import { createFacadeMaterial } from './facade.js';
 import { PALETTE } from './palette.js';
 
 const BLOCK = 42;      // metres between street centrelines
@@ -124,6 +125,18 @@ export class City {
 
   // ------------------------------------------------------------------ towers
 
+  /**
+   * Tower massing.
+   *
+   * Each building is composed from several stacked boxes rather than being a
+   * single scaled cube: a wider podium at street level, one to three shaft
+   * tiers that step back as they rise, and a narrower crown. All of them live
+   * in one InstancedMesh, so a city of far more interesting silhouettes still
+   * costs exactly one draw call.
+   *
+   * Setbacks are what make a skyline read as architecture instead of as a bar
+   * chart, and they cost nothing but a few more instances.
+   */
   _buildTowers() {
     const n = QUALITY.cityBlocks;
     const towers = [];
@@ -138,77 +151,123 @@ export class City {
         const count = 2 + ((this.rand() * 3) | 0);
         const usable = BLOCK - STREET;
         for (let k = 0; k < count; k++) {
-          const w = range(this.rand, 8, usable * 0.55);
-          const d = range(this.rand, 8, usable * 0.55);
+          const w = range(this.rand, 9, usable * 0.55);
+          const d = range(this.rand, 9, usable * 0.55);
           const distance = Math.hypot(cx, cz);
           // Taller towards the horizon: reads as a downtown core beyond the
           // playable streets without us having to build one.
-          const h = range(this.rand, 14, 34) + distance * 0.42;
+          const h = range(this.rand, 18, 40) + distance * 0.45;
           const px = cx + range(this.rand, -1, 1) * (usable / 2 - w / 2);
           const pz = cz + range(this.rand, -1, 1) * (usable / 2 - d / 2);
-          towers.push({ px, pz, w, d, h, alt: this.rand() < 0.4 });
+          towers.push({ px, pz, w, d, h, seed: this.rand() });
         }
       }
     }
     this.towers = towers;
 
-    // Two facade variants so the window pattern does not tile across the city.
-    for (const alt of [false, true]) {
-      const set = towers.filter((t) => t.alt === alt);
-      if (!set.length) continue;
-
-      const mat = this.mats.concrete.clone();
-      mat.emissive = new THREE.Color('#ffffff');
-      mat.emissiveMap = alt ? this.mats.facadeAlt : this.mats.facade;
-      mat.emissiveIntensity = 1.3;
-
-      // Redirect the per-instance colour from diffuse onto emissive. Out of
-      // the box `instanceColor` multiplies the base colour, which here would
-      // just stain the concrete; what we want to vary per building is the
-      // colour of its lit windows, so each tower reads as its own block of
-      // tenants rather than a copy of the facade texture.
-      mat.onBeforeCompile = (shader) => {
-        shader.fragmentShader = shader.fragmentShader
-          .replace('#include <color_fragment>', '')
-          .replace(
-            '#include <emissivemap_fragment>',
-            '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= vColor.rgb;'
-          );
-      };
-      mat.customProgramCacheKey = () => `tower-emissive-tint-${alt}`;
-
-      const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, set.length);
-      mesh.castShadow = QUALITY.shadows;
-      mesh.receiveShadow = QUALITY.shadows;
-      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(set.length * 3), 3);
-
-      const m = new THREE.Matrix4();
-      const q = new THREE.Quaternion();
-      const s = new THREE.Vector3();
-      const p = new THREE.Vector3();
-      const tint = new THREE.Color();
-
-      set.forEach((t, i) => {
-        p.set(t.px, t.h / 2, t.pz);
-        s.set(t.w, t.h, t.d);
-        m.compose(p, q, s);
-        mesh.setMatrixAt(i, m);
-
-        // Hue restricted to the green→blue→purple arc, so per-building
-        // variation never leaves the palette.
-        tint.setHSL(range(this.rand, 0.42, 0.75), 0.55, range(this.rand, 0.55, 0.9));
-        mesh.setColorAt(i, tint);
-      });
-
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.instanceColor.needsUpdate = true;
-      this.group.add(mesh);
-    }
+    // --- decompose each tower into stacked boxes
+    const parts = [];    // { x, y, z, w, h, d, tint }
+    const caps = [];     // parapet slabs capping each tier
+    const tint = new THREE.Color();
 
     for (const t of towers) {
+      // One hue for the whole building, so its tiers read as one structure.
+      tint.setHSL(range(this.rand, 0.42, 0.75), 0.5, range(this.rand, 0.55, 0.9));
+      const rgb = { r: tint.r, g: tint.g, b: tint.b };
+
+      const podiumH = Math.min(7.2, t.h * 0.28);
+      parts.push({
+        x: t.px, y: podiumH / 2, z: t.pz,
+        w: t.w * 1.14, h: podiumH, d: t.d * 1.14, tint: rgb,
+      });
+      caps.push({ x: t.px, y: podiumH, z: t.pz, w: t.w * 1.2, d: t.d * 1.2 });
+
+      // Shaft tiers, each stepping in.
+      const tiers = 1 + ((this.rand() * 3) | 0);
+      let base = podiumH;
+      let remaining = t.h - podiumH;
+      let sw = t.w;
+      let sd = t.d;
+
+      for (let i = 0; i < tiers && remaining > 3; i++) {
+        const last = i === tiers - 1;
+        const tierH = last ? remaining : remaining * range(this.rand, 0.4, 0.7);
+        parts.push({
+          x: t.px, y: base + tierH / 2, z: t.pz,
+          w: sw, h: tierH, d: sd, tint: rgb,
+        });
+        base += tierH;
+        remaining -= tierH;
+        if (!last) {
+          caps.push({ x: t.px, y: base, z: t.pz, w: sw * 1.06, d: sd * 1.06 });
+          const step = range(this.rand, 0.72, 0.9);
+          sw *= step;
+          sd *= step;
+        }
+      }
+
+      // Crown, on the taller buildings only.
+      if (t.h > 34) {
+        const crownH = range(this.rand, 2.5, 6);
+        parts.push({
+          x: t.px, y: base + crownH / 2, z: t.pz,
+          w: sw * 0.62, h: crownH, d: sd * 0.62, tint: rgb,
+        });
+        base += crownH;
+      }
+      caps.push({ x: t.px, y: base, z: t.pz, w: sw * 1.08, d: sd * 1.08 });
+      t.roof = base;
+    }
+
+    // --- one instanced mesh for every box in the city
+    const mesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      createFacadeMaterial({ seedOffset: 0 }),
+      parts.length
+    );
+    mesh.castShadow = QUALITY.shadows;
+    mesh.receiveShadow = QUALITY.shadows;
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(parts.length * 3), 3);
+
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const sv = new THREE.Vector3();
+    const pv = new THREE.Vector3();
+
+    parts.forEach((b, i) => {
+      pv.set(b.x, b.y, b.z);
+      sv.set(b.w, b.h, b.d);
+      m.compose(pv, q, sv);
+      mesh.setMatrixAt(i, m);
+      mesh.instanceColor.setXYZ(i, b.tint.r, b.tint.g, b.tint.b);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceColor.needsUpdate = true;
+    this.group.add(mesh);
+    this.towerMesh = mesh;
+
+    // --- parapets: a thin slab overhanging each tier top. Cheap, and the
+    // single strongest cue that a roof has an edge rather than just stopping.
+    const cap = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1), this.mats.darkMetal, caps.length
+    );
+    cap.castShadow = QUALITY.shadows;
+    caps.forEach((c, i) => {
+      pv.set(c.x, c.y + 0.22, c.z);
+      sv.set(c.w, 0.44, c.d);
+      m.compose(pv, q, sv);
+      cap.setMatrixAt(i, m);
+    });
+    cap.instanceMatrix.needsUpdate = true;
+    this.group.add(cap);
+
+    // Collision uses the podium, which is the widest part at walking height.
+    for (const t of towers) {
+      const hw = (t.w * 1.14) / 2;
+      const hd = (t.d * 1.14) / 2;
       this.colliders.push({
-        minX: t.px - t.w / 2, maxX: t.px + t.w / 2,
-        minZ: t.pz - t.d / 2, maxZ: t.pz + t.d / 2,
+        minX: t.px - hw, maxX: t.px + hw,
+        minZ: t.pz - hd, maxZ: t.pz + hd,
       });
     }
   }
@@ -226,7 +285,7 @@ export class City {
 
     for (const t of this.towers) {
       if (this.rand() > 0.85 * density) continue;
-      const roof = t.h;
+      const roof = t.roof ?? t.h;
       const count = 1 + ((this.rand() * 3 * density) | 0);
       for (let k = 0; k < count; k++) {
         units.push({
@@ -721,7 +780,9 @@ export class City {
 
           vec4 mv = modelViewMatrix * vec4(x, y, z, 1.0);
           gl_Position = projectionMatrix * mv;
-          gl_PointSize = 2.2 * (12.0 / max(-mv.z, 1.0));
+          // Clamped hard. An unbounded 1/z point size turns nearby drops into
+          // screen-filling squares, which is what rain looked like before.
+          gl_PointSize = clamp(46.0 / max(-mv.z, 0.5), 1.0, 7.0);
           // Fade the top of the column so drops appear rather than pop in.
           vFade = smoothstep(uHeight, uHeight * 0.72, y);
         }
@@ -730,7 +791,15 @@ export class City {
         uniform vec3 uColor;
         varying float vFade;
         void main() {
-          gl_FragColor = vec4(uColor * 0.55 * vFade, 0.55 * vFade);
+          // Shape the point into a soft vertical streak. A bare point sprite
+          // is a hard-edged square, which at any visible size reads as debris
+          // rather than as rain.
+          vec2 pc = gl_PointCoord - 0.5;
+          float streak = smoothstep(0.5, 0.05, abs(pc.x) * 3.2)
+                       * smoothstep(0.55, 0.15, abs(pc.y));
+          float a = streak * vFade * 0.5;
+          if (a < 0.01) discard;
+          gl_FragColor = vec4(uColor * a, a);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }
