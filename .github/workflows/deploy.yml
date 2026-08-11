@@ -1,12 +1,14 @@
-name: Deploy to GitHub Pages
+name: Build and deploy to GitHub Pages
 
+# Fires on every branch rather than a hardcoded one. A branch filter of
+# [main] silently never runs in a repository whose default branch is named
+# something else — which is exactly what happened here, so the deploy looked
+# configured while nothing had ever been built. Branch selection is enforced
+# on the deploy job instead, against the repository's real default branch.
 on:
   push:
-    branches: [main]
   workflow_dispatch:
 
-# Allow one concurrent deployment, and let a newer push supersede an
-# in-flight one rather than queueing behind it.
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -27,6 +29,15 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Also switches the Pages source to GitHub Actions if the repository is
+      # still on the legacy "deploy from a branch" mode. Without this the
+      # branch builder keeps publishing the repo root, whose index.html points
+      # at unbundled source the browser cannot execute.
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - run: npm ci
 
       - run: npm run build
@@ -45,6 +56,8 @@ jobs:
 
   deploy:
     needs: build
+    # Publish only from the default branch, whatever it happens to be named.
+    if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     environment:
       name: github-pages
