@@ -3,14 +3,27 @@ import { QUALITY } from '../core/quality.js';
 import { library, neonMaterial } from '../world/materials.js';
 import { PALETTE } from '../world/palette.js';
 import { makeRNG, range } from '../core/rng.js';
+import { BLOCK, STREET } from '../world/city.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+// Rival liveries, inside the palette.
+const RIVAL_COLORS = ['#48d6ff', '#b98cff', '#3dffa8', '#7c5cff', '#5cf2d6'];
+
 const LAPS = 3;
-const TRACK_HALF_WIDTH = 7.5;
-const BASE_SPEED = 26;      // m/s cruise
-const MAX_SPEED = 62;       // m/s with boost, at full throttle
-const BOOST_GAIN = 16;
+const TRACK_HALF_WIDTH = STREET / 2 - 1.2;   // fits between the kerbs
+
+// Real car numbers. The first pass ran at 62 m/s — 223 km/h — down a ribbon
+// eight metres wide, which is not exhilarating, it is just a blur you cannot
+// read. A racing car on a tight city circuit lives around 100–150 km/h, and at
+// that speed you can actually see the corner you are about to take.
+const IDLE_SPEED = 8;       // m/s off-throttle, ~29 km/h
+const CRUISE_SPEED = 26;    // m/s part-throttle, ~94 km/h
+const MAX_SPEED = 38;       // m/s flat out, ~137 km/h
+const BRAKE_RATE = 26;      // m/s² — brakes are far stronger than the engine
+const ACCEL_RATE = 7.5;     // m/s² — and acceleration is not instant
+const BOOST_GAIN = 4;   // boost tops out around 150 km/h, not 220
+const OPPONENTS = 5;
 
 // Gate ring tints, written straight into instanceColor. Deliberately over 1.0
 // on the lit states: the tone mapper turns the overshoot into a hot core.
@@ -69,6 +82,7 @@ export class Racing {
     this._buildRibbon();
     this._buildGates();
     this._buildCraft();
+    this._buildRivals();
     this._buildHUD();
 
     this.best = Number(localStorage.getItem('neonline.best') || 0) || null;
@@ -79,21 +93,50 @@ export class Racing {
   // ---------------------------------------------------------------- track
 
   _buildCurve() {
-    // A closed ring threaded around the city at rooftop height, with enough
-    // vertical variation that the horizon moves without the craft ever
-    // pitching hard enough to be uncomfortable.
+    /**
+     * A street circuit, laid on the road grid at ground level.
+     *
+     * The first version was a ribbon floating at rooftop height on a wobbling
+     * radius, and it drove straight through tower blocks — the track and the
+     * city were generated independently and nothing reconciled them. Routing
+     * the circuit down the streets fixes that by construction: the streets are
+     * the one part of the map guaranteed to be clear, because that is where
+     * the buildings are not.
+     *
+     * It is also the honest answer to "make it realistic". Real city races are
+     * run on closed public roads, between the buildings, not on a skyway.
+     */
+    const S = BLOCK * 2.5;     // half-extent, landing on a street centreline
+    const CORNER = 26;         // corner radius
+    const Y = 0.28;            // just proud of the road surface
     const pts = [];
-    const N = 14;
-    for (let i = 0; i < N; i++) {
-      const a = (i / N) * Math.PI * 2;
-      const r = 118 + Math.sin(a * 3) * 26 + range(this.rand, -8, 8);
-      pts.push(new THREE.Vector3(
-        Math.cos(a) * r,
-        26 + Math.sin(a * 2 + 0.6) * 9 + Math.sin(a * 5) * 3,
-        Math.sin(a) * r
-      ));
-    }
-    this.curve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
+
+    const straight = (x0, z0, x1, z1, n = 4) => {
+      for (let i = 0; i < n; i++) {
+        const k = i / n;
+        pts.push(new THREE.Vector3(
+          THREE.MathUtils.lerp(x0, x1, k), Y, THREE.MathUtils.lerp(z0, z1, k)
+        ));
+      }
+    };
+    const corner = (cx, cz, a0, a1, n = 5) => {
+      for (let i = 0; i <= n; i++) {
+        const a = THREE.MathUtils.lerp(a0, a1, i / n);
+        pts.push(new THREE.Vector3(cx + Math.cos(a) * CORNER, Y, cz + Math.sin(a) * CORNER));
+      }
+    };
+
+    const I = S - CORNER;
+    straight(S, -I, S, I);
+    corner(I, I, 0, Math.PI / 2);
+    straight(I, S, -I, S);
+    corner(-I, I, Math.PI / 2, Math.PI);
+    straight(-S, I, -S, -I);
+    corner(-I, -I, Math.PI, Math.PI * 1.5);
+    straight(-I, -S, I, -S);
+    corner(I, -I, Math.PI * 1.5, Math.PI * 2);
+
+    this.curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.5);
     this.length = this.curve.getLength();
 
     // Cached frames: sampling the curve every frame for tangent and normal is
@@ -233,7 +276,7 @@ export class Racing {
       const { tangent } = this._frameAt(t);
 
       const pos = new THREE.Vector3(
-        p.x + right.x * offset, p.y + 2.3, p.z + right.z * offset
+        p.x + right.x * offset, p.y + 2.6, p.z + right.z * offset
       );
       look.lookAt(new THREE.Vector3(), tangent, new THREE.Vector3(0, 1, 0));
       q.setFromRotationMatrix(look);
@@ -331,6 +374,128 @@ export class Racing {
     this.group.add(this.ghostMesh);
   }
 
+  /**
+   * The field you are racing. Five rivals on the same circuit, each with its
+   * own pace and preferred line, all in one InstancedMesh.
+   *
+   * They are not on rails relative to you: there is no rubber-banding that
+   * drags them back when you pull ahead. A rival who is quicker than you stays
+   * ahead, which is the only way finishing second means anything.
+   */
+  _buildRivals() {
+    this.rivals = [];
+    const body = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1.9, 0.62, 4.2),
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color('#11162c'),
+        roughness: 0.35, metalness: 0.7, envMapIntensity: 1.1,
+      }),
+      OPPONENTS
+    );
+    body.castShadow = QUALITY.shadows;
+    body.frustumCulled = false;
+    body.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.group.add(body);
+    this.rivalBody = body;
+
+    // Tail lights, so you can read a rival's distance in the dark.
+    const tail = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1.5, 0.12, 0.06),
+      new THREE.MeshBasicMaterial({ toneMapped: true }),
+      OPPONENTS
+    );
+    tail.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(OPPONENTS * 3), 3);
+    tail.frustumCulled = false;
+    tail.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.group.add(tail);
+    this.rivalTail = tail;
+
+    const c = new THREE.Color();
+    for (let i = 0; i < OPPONENTS; i++) {
+      this.rivals.push({
+        t: 0,
+        lap: 0,
+        // Spread across the grid behind the player, alternating sides.
+        gridOffset: (i % 2 === 0 ? -1 : 1) * (1.6 + (i >> 1) * 1.4),
+        gridBack: 0.004 + i * 0.0035,
+        offset: 0,
+        speed: 0,
+        // Each rival has a different flat-out pace, so the field spreads out
+        // over a lap the way a real one does.
+        pace: 0.80 + i * 0.055 + range(this.rand, -0.02, 0.02),
+        line: range(this.rand, -0.55, 0.55),
+        colour: RIVAL_COLORS[i % RIVAL_COLORS.length],
+      });
+      c.set(this.rivals[i].colour).convertSRGBToLinear().multiplyScalar(2.4);
+      tail.setColorAt(i, c);
+    }
+    tail.instanceColor.needsUpdate = true;
+  }
+
+  _resetRivals() {
+    for (const r of this.rivals) {
+      // The grid sits just *behind* the start line, which means a t near 1 on
+      // the previous lap. Leaving lap at 0 here put the whole field 99.6% of a
+      // lap ahead of the player before the lights went out, and you finished
+      // last no matter how you drove.
+      r.t = (1 - r.gridBack) % 1;
+      r.lap = -1;
+      r.offset = r.gridOffset;
+      r.speed = 0;
+    }
+  }
+
+  _updateRivals(dt) {
+    const sc = this._scratch;
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const one = new THREE.Vector3(1, 1, 1);
+    const pos = new THREE.Vector3();
+    const look = new THREE.Matrix4();
+
+    for (let i = 0; i < this.rivals.length; i++) {
+      const r = this.rivals[i];
+      // Rivals lift off the throttle for the tighter parts of the lap, which
+      // is what makes them catchable through the corners rather than uniformly
+      // faster or uniformly slower.
+      const corner = 0.82 + 0.18 * Math.abs(Math.sin(r.t * Math.PI * 6));
+      const target = MAX_SPEED * r.pace * corner;
+      r.speed += THREE.MathUtils.clamp(target - r.speed, -BRAKE_RATE * dt, ACCEL_RATE * dt);
+
+      const prev = r.t;
+      r.t = (r.t + (r.speed * dt) / this.length) % 1;
+      if (r.t < prev) r.lap++;
+
+      // Drift towards their preferred line.
+      r.offset += (r.line * (TRACK_HALF_WIDTH - 2) - r.offset) * Math.min(1, dt * 0.8);
+
+      const p = this.curve.getPointAt(r.t, sc.curvePoint);
+      const right = this._rightAt(r.t, sc.right);
+      const { tangent } = this._frameAt(r.t);
+      pos.set(p.x + right.x * r.offset, p.y + 0.55, p.z + right.z * r.offset);
+      look.lookAt(new THREE.Vector3(), tangent, UP);
+      q.setFromRotationMatrix(look);
+
+      m.compose(pos, q, one);
+      this.rivalBody.setMatrixAt(i, m);
+
+      pos.addScaledVector(tangent, -2.05);
+      pos.y += 0.16;
+      m.compose(pos, q, one);
+      this.rivalTail.setMatrixAt(i, m);
+    }
+    this.rivalBody.instanceMatrix.needsUpdate = true;
+    this.rivalTail.instanceMatrix.needsUpdate = true;
+  }
+
+  /** 1-based finishing order, counting laps then distance around the lap. */
+  _position() {
+    const mine = this.lap + this.t;
+    let ahead = 0;
+    for (const r of this.rivals) if (r.lap + r.t > mine) ahead++;
+    return ahead + 1;
+  }
+
   _buildHUD() {
     // Instrument panel, mounted on the craft rather than floating in vision.
     // Diegetic even here — the design doc forbids screen-space UI.
@@ -374,9 +539,10 @@ export class Racing {
       c.textAlign = 'left';
     } else if (this.state === 'finished') {
       c.textAlign = 'center';
-      c.fillStyle = PALETTE.accentGreen;
+      const place = this._finishPlace ?? 1;
+      c.fillStyle = place === 1 ? PALETTE.accentGreen : PALETTE.accentBlue;
       c.font = '700 46px ui-sans-serif, system-ui, sans-serif';
-      c.fillText('FINISH', 256, 40);
+      c.fillText(place === 1 ? 'WON' : `FINISHED P${place}`, 256, 40);
       c.fillStyle = '#eaf6ff';
       c.font = '500 28px ui-sans-serif, system-ui, sans-serif';
       c.fillText(fmt(this.lapTimes.reduce((a, b) => a + b, 0)), 256, 106);
@@ -388,6 +554,18 @@ export class Racing {
       c.fillText(`LAP ${Math.min(this.lap + 1, LAPS)}/${LAPS}`, 26, 22);
       c.font = '600 52px ui-sans-serif, system-ui, sans-serif';
       c.fillText(fmt(this._lapClock), 26, 62);
+
+      // Position, large and on the right. In a race it is the only number that
+      // matters, and it should be readable without hunting for it.
+      const place = this._position();
+      c.textAlign = 'right';
+      c.fillStyle = place === 1 ? PALETTE.accentGreen : '#eaf6ff';
+      c.font = '700 66px ui-sans-serif, system-ui, sans-serif';
+      c.fillText(`P${place}`, 486, 18);
+      c.font = '400 20px ui-sans-serif, system-ui, sans-serif';
+      c.fillStyle = '#93b6dd';
+      c.fillText(`of ${this.rivals.length + 1}`, 486, 92);
+      c.textAlign = 'left';
 
       c.font = '400 20px ui-sans-serif, system-ui, sans-serif';
       c.fillStyle = '#93b6dd';
@@ -426,6 +604,7 @@ export class Racing {
     this._gatesHitTotal = 0;
     for (const g of this.gates) { g.taken = false; g.halo.opacity = 0.5; }
     this._setAllGateColors(GATE_IDLE);
+    this._resetRivals();
     this.ghostMesh.visible = !!this._ghost;
   }
 
@@ -481,12 +660,26 @@ export class Racing {
     // --- racing
     this._lapClock += dt;
 
-    // Throttle. Holding the trigger accelerates; releasing coasts down to a
-    // cruise rather than to a stop, so a nervous player is never stranded.
-    const throttle = input.trigger ? 1 : 0.35;
-    const target = BASE_SPEED + (MAX_SPEED - BASE_SPEED) * throttle + this.boost;
-    this.speed = THREE.MathUtils.damp(this.speed, target, 2.2, dt);
-    this.boost = Math.max(0, this.boost - dt * 9);
+    // Throttle and brakes, rate-limited rather than eased to a target. A car
+    // that snaps to its target speed has no weight; one that accelerates at a
+    // fixed rate and brakes harder than it accelerates feels like a car.
+    const throttle = input.trigger ? 1 : 0.25;
+    const target = IDLE_SPEED + (MAX_SPEED - IDLE_SPEED) * throttle + this.boost;
+
+    if (input.brake) {
+      this.speed = Math.max(IDLE_SPEED * 0.35, this.speed - BRAKE_RATE * dt);
+    } else if (this.speed < target) {
+      // Power falls off towards the top end, so the last 20 km/h is work.
+      const headroom = 1 - Math.min(this.speed / MAX_SPEED, 1) * 0.55;
+      this.speed = Math.min(target, this.speed + ACCEL_RATE * headroom * dt);
+    } else {
+      // Engine braking and drag.
+      this.speed = Math.max(target, this.speed - 9 * dt);
+    }
+    // Cap the boost pool as well as its decay, so stacking gates cannot walk
+    // the car past the speed the mode is designed to be readable at.
+    this.boost = Math.min(this.boost, 6);
+    this.boost = Math.max(0, this.boost - dt * 4);
 
     // Lateral. Rate-limited so the craft has weight and the player cannot
     // strobe side to side.
@@ -541,12 +734,14 @@ export class Racing {
       this._setAllGateColors(GATE_IDLE);
       if (this.lap >= LAPS) {
         this.state = 'finished';
+        this._finishPlace = this._position();
         this._saveRun(this.lapTimes.reduce((a, b) => a + b, 0));
       }
     }
 
     this.audio?.setSpeed(THREE.MathUtils.clamp(this.speed / MAX_SPEED, 0, 1));
 
+    this._updateRivals(dt);
     this._place();
     this._updateGhost();
     this._drawHUD();
@@ -561,7 +756,7 @@ export class Racing {
 
     this.engine.rig.position.set(
       p.x + right.x * this.offset,
-      p.y + 1.1,
+      p.y + 1.05,
       p.z + right.z * this.offset
     );
 
@@ -575,7 +770,7 @@ export class Racing {
     this.engine.rig.quaternion.setFromEuler(sc.euler);
 
     // Thruster brightness tracks throttle.
-    const f = THREE.MathUtils.clamp((this.speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED), 0, 1);
+    const f = THREE.MathUtils.clamp((this.speed - IDLE_SPEED) / (MAX_SPEED - IDLE_SPEED), 0, 1);
     this.thrusterMat.opacity = 0.45 + f * 0.55;
     this.thruster.scale.setScalar(1.0 + f * 0.9);
   }
@@ -597,7 +792,10 @@ export class Racing {
   }
 
   _input() {
-    let trigger = false, grip = false, steer = 0;
+    let trigger = false, grip = false, steer = 0, brake = false;
+    // The wrist panel takes priority; otherwise its grip-to-open doubles as
+    // this mode's grip-to-leave and you exit the moment you open settings.
+    if (this.inputLocked) return { trigger: false, grip: false, steer: 0, brake: false };
     const session = this.engine.renderer.xr.getSession?.();
     if (session) {
       for (const src of session.inputSources) {
@@ -607,6 +805,9 @@ export class Racing {
         if (gp.buttons[1]?.pressed) grip = true;
         const ax = gp.axes.length >= 4 ? gp.axes[2] : gp.axes[0] ?? 0;
         if (Math.abs(ax) > Math.abs(steer)) steer = ax;
+        // Pulling the stick back is the brake — the same gesture as easing off.
+        const ay = gp.axes.length >= 4 ? gp.axes[3] : gp.axes[1] ?? 0;
+        if (ay > 0.55) brake = true;
       }
     }
     if (this._keys) {
@@ -614,8 +815,9 @@ export class Racing {
       if (this._keys.has('Escape')) grip = true;
       if (this._keys.has('KeyA') || this._keys.has('ArrowLeft')) steer = -1;
       if (this._keys.has('KeyD') || this._keys.has('ArrowRight')) steer = 1;
+      if (this._keys.has('KeyS') || this._keys.has('ArrowDown')) brake = true;
     }
-    return { trigger, grip, steer: THREE.MathUtils.clamp(steer, -1, 1) };
+    return { trigger, grip, brake, steer: THREE.MathUtils.clamp(steer, -1, 1) };
   }
 
   /** Desktop input is owned by Player; it hands the key set over on entry. */

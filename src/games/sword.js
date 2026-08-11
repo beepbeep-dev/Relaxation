@@ -4,36 +4,37 @@ import { library, neonMaterial } from '../world/materials.js';
 import { PALETTE } from '../world/palette.js';
 import { makeRNG, range } from '../core/rng.js';
 
-const UP = new THREE.Vector3(0, 1, 0);
+const ARENA_R = 7.0;
+const FRONT_ARC = Math.PI * 0.7;     // enemies only come from in front — seated-viable
+const MAX_ENEMIES = 8;               // fixed pool, so body parts can be instanced
 
-// Arena geometry. Enemies only ever approach through a frontal arc, which is
-// what makes the whole mode seated-playable — see §4.2 of the design doc.
-const ARENA_R = 6.5;
-const FRONT_ARC = Math.PI * 0.62;    // ±56° from straight ahead
+const STRIKE_RANGE = 1.9;
+const WINDUP = 0.85;                 // seconds with the sword raised before it falls
+const RECOVER = 0.7;
+const BLOCK_RADIUS = 0.45;           // how close your blade must be to theirs
+const KILL_SPEED = 2.6;              // m/s of blade tip needed to cut, not nudge
 
-const TELEGRAPH = 0.75;   // seconds of warning before a strike lands
-const PARRY_WINDOW = 0.28;
-const BLADE_LENGTH = 0.92;
+const BLADE_LENGTH = 0.95;
+const START_HEALTH = 5;
 
 /**
- * STEEL GARDEN — the sword game.
+ * STEEL GARDEN — sword fighting, endless, until you die.
  *
- * The failure mode this design exists to avoid is flailing being optimal.
- * Almost every VR sword game degenerates into windmilling because swing speed
- * is the only input that matters. Here it is the *angle* of your blade at the
- * moment of contact, and wild swinging actively costs you:
+ * The first version of this was an abstract parry puzzle against floating
+ * holograms, which is not what a sword game is. This is the corrected one:
+ * humanoid opponents walk at you with swords, you cut them by actually
+ * swinging, they cut you back, and it does not stop until you are dead.
  *
- *  - The blade carries simulated inertia. It lags your hand, so a fast
- *    reversal leaves the tip somewhere you did not intend, and you cannot
- *    present a stable angle while swinging hard.
- *  - Enemies telegraph a coloured slash line 750ms ahead. You parry by holding
- *    the blade roughly perpendicular to that line — reading, not reflexes.
- *  - The parry window is generous (280ms). The difficulty is in noticing which
- *    of three enemies is about to commit, not in frame-perfect timing.
+ * Two rules keep it from being a windmill:
  *
- * Enemies are angular holograms — no faces, no gore, no death. They dissolve.
- * That keeps a combat mode tonally compatible with a game whose other two
- * modes are a rooftop deck and a hover race.
+ *  - A cut needs real blade speed (KILL_SPEED). Resting your sword inside
+ *    someone does nothing, so you have to swing properly.
+ *  - A block is positional: when their blade comes down, yours has to be near
+ *    it. Not an angle puzzle — just put your sword in the way, which is what
+ *    everyone tries to do instinctively anyway.
+ *
+ * Every body part is an InstancedMesh across the whole enemy pool, so eight
+ * opponents cost four draw calls rather than forty.
  */
 export class Sword {
   constructor(engine, glow, opts = {}) {
@@ -49,31 +50,39 @@ export class Sword {
     engine.scene.add(this.group);
 
     this.active = false;
-    this.state = 'idle';        // idle | ready | fighting | cleared | defeated
-    this.wave = 0;
+    this.inputLocked = false;
+    this.state = 'idle';        // idle | ready | fighting | dead
+    this.wave = 1;
+    this.kills = 0;
     this.score = 0;
-    this.parries = 0;
-    this.health = 3;
+    this.health = START_HEALTH;
     this.best = Number(localStorage.getItem('steelgarden.best') || 0) || 0;
 
     this.enemies = [];
     this._spawnTimer = 0;
-    this._messageTimer = 0;
 
-    // Scratch, hoisted: this runs at 90Hz.
     this._scratch = {
       tipPrev: new THREE.Vector3(),
       tip: new THREE.Vector3(),
       base: new THREE.Vector3(),
       dir: new THREE.Vector3(),
       head: new THREE.Vector3(),
-      toEnemy: new THREE.Vector3(),
-      q: new THREE.Quaternion(),
-      m: new THREE.Matrix4(),
       v: new THREE.Vector3(),
+      v2: new THREE.Vector3(),
+      bladeA: new THREE.Vector3(),
+      bladeB: new THREE.Vector3(),
+      enemyM: new THREE.Matrix4(),
+      partM: new THREE.Matrix4(),
+      localM: new THREE.Matrix4(),
+      q: new THREE.Quaternion(),
+      e: new THREE.Euler(),
+      p: new THREE.Vector3(),
+      s: new THREE.Vector3(1, 1, 1),
+      zero: new THREE.Matrix4().makeScale(0, 0, 0),
     };
 
     this._buildArena();
+    this._buildEnemyPool();
     this._buildBlade();
     this._buildHUD();
   }
@@ -81,25 +90,17 @@ export class Sword {
   // ------------------------------------------------------------------ arena
 
   _buildArena() {
-    // An enclosing shell, open at the top. Without it the arena is a disc in a
-    // void, which reads as an unfinished level rather than as the holographic
-    // training room the fiction describes — and a bounded space is also what
-    // lets the player judge enemy distance at a glance.
     const shell = new THREE.Mesh(
       new THREE.CylinderGeometry(ARENA_R + 2.5, ARENA_R + 2.5, 9, 40, 1, true),
       new THREE.MeshStandardMaterial({
         color: new THREE.Color('#0a0a18'),
-        roughness: 0.9,
-        metalness: 0.1,
-        side: THREE.BackSide,
-        envMapIntensity: 0.25,
+        roughness: 0.9, metalness: 0.1,
+        side: THREE.BackSide, envMapIntensity: 0.25,
       })
     );
     shell.position.y = 3.6;
     this.group.add(shell);
 
-    // Faint grid on the shell: the holodeck read, and a parallax reference
-    // that makes your own head movement legible while standing still.
     const gridPts = [];
     const R = ARENA_R + 2.45;
     for (let i = 0; i < 40; i++) {
@@ -115,26 +116,19 @@ export class Sword {
         gridPts.push(new THREE.Vector3(Math.cos(a1) * R, y, Math.sin(a1) * R));
       }
     }
-    const grid = new THREE.LineSegments(
+    this.group.add(new THREE.LineSegments(
       new THREE.BufferGeometry().setFromPoints(gridPts),
       new THREE.LineBasicMaterial({
         color: new THREE.Color(PALETTE.accentBlue),
         transparent: true, opacity: 0.16, toneMapped: false, fog: false,
       })
-    );
-    this.group.add(grid);
+    ));
 
-    // A dark disc with a lit rim. Deliberately austere — anything decorative
-    // competes with the telegraph lines you need to read.
     const floor = new THREE.Mesh(
       new THREE.CylinderGeometry(ARENA_R, ARENA_R, 0.3, 48),
       new THREE.MeshStandardMaterial({
         color: new THREE.Color('#0a0d1c'),
-        // Low metalness on purpose: at 0.6 the floor mirrored the sun into a
-        // blown-out smear that washed out half the arena.
-        roughness: 0.62,
-        metalness: 0.16,
-        envMapIntensity: 0.14,
+        roughness: 0.62, metalness: 0.16, envMapIntensity: 0.14,
       })
     );
     floor.position.y = -0.15;
@@ -146,72 +140,140 @@ export class Sword {
       neonMaterial(PALETTE.accentGreen, 2.6)
     );
     rim.rotation.x = -Math.PI / 2;
-    rim.position.y = 0.02;
     this.group.add(rim);
 
-    // Concentric guide rings, dimmer, so distance to an approaching enemy is
-    // readable on the floor rather than only in stereo depth.
-    for (const r of [2.2, 4.0]) {
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(r, 0.015, 4, 48),
-        neonMaterial(PALETTE.accentBlue, 1.1)
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.02;
-      this.group.add(ring);
-    }
-
-    // Pillars marking the edge of the frontal arc, so the player knows where
-    // things can come from and can stop checking over their shoulder.
-    const pillar = new THREE.InstancedMesh(
-      new THREE.CylinderGeometry(0.07, 0.07, 3.2, 6),
-      neonMaterial(PALETTE.accentPurple, 0.8),
-      2
+    // A ring at strike range, so you can see how close is too close.
+    const danger = new THREE.Mesh(
+      new THREE.TorusGeometry(STRIKE_RANGE + 0.5, 0.02, 4, 48),
+      neonMaterial(PALETTE.accentPurple, 1.4)
     );
-    const m = new THREE.Matrix4();
-    [-1, 1].forEach((side, i) => {
-      const a = side * FRONT_ARC;
-      m.setPosition(Math.sin(a) * ARENA_R, 1.6, -Math.cos(a) * ARENA_R);
-      pillar.setMatrixAt(i, m);
+    danger.rotation.x = -Math.PI / 2;
+    danger.position.y = 0.02;
+    this.group.add(danger);
+  }
+
+  // ------------------------------------------------------------ enemy pool
+
+  /**
+   * One InstancedMesh per body part, sized to the pool. Unused slots are
+   * scaled to zero rather than removed, so nothing allocates mid-fight.
+   */
+  _buildEnemyPool() {
+    const skin = new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#2b2f52'),
+      roughness: 0.7, metalness: 0.15, envMapIntensity: 0.6,
     });
-    pillar.instanceMatrix.needsUpdate = true;
-    this.group.add(pillar);
+    const trim = new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#141838'),
+      emissive: new THREE.Color(PALETTE.accentPurple),
+      emissiveIntensity: 0.45,
+      roughness: 0.6, metalness: 0.3,
+    });
+
+    const mk = (geo, mat, count) => {
+      const m = new THREE.InstancedMesh(geo, mat, count);
+      m.castShadow = QUALITY.shadows;
+      m.frustumCulled = false;
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.group.add(m);
+      return m;
+    };
+
+    this.parts = {
+      head: mk(new THREE.BoxGeometry(0.21, 0.24, 0.21), skin, MAX_ENEMIES),
+      torso: mk(new THREE.BoxGeometry(0.42, 0.58, 0.24), trim, MAX_ENEMIES),
+      // Four limbs each — two legs, two arms — packed into one mesh.
+      limb: mk(new THREE.BoxGeometry(0.13, 0.52, 0.13), skin, MAX_ENEMIES * 4),
+      sword: mk(new THREE.BoxGeometry(0.05, 0.9, 0.014),
+        neonMaterial(PALETTE.accentPurple, 2.4), MAX_ENEMIES),
+    };
+    this._hideAllParts();
+  }
+
+  _hideAllParts() {
+    const zero = this._scratch.zero;
+    for (const key of ['head', 'torso', 'sword']) {
+      for (let i = 0; i < MAX_ENEMIES; i++) this.parts[key].setMatrixAt(i, zero);
+      this.parts[key].instanceMatrix.needsUpdate = true;
+    }
+    for (let i = 0; i < MAX_ENEMIES * 4; i++) this.parts.limb.setMatrixAt(i, zero);
+    this.parts.limb.instanceMatrix.needsUpdate = true;
+  }
+
+  _spawnEnemy() {
+    if (this.enemies.length >= MAX_ENEMIES) return null;
+    const used = new Set(this.enemies.map((e) => e.slot));
+    let slot = 0;
+    while (used.has(slot)) slot++;
+
+    const angle = range(this.rand, -FRONT_ARC, FRONT_ARC);
+    const spawnR = ARENA_R - 0.5;
+    const e = {
+      slot,
+      angle,
+      speed: 0.9 + this.wave * 0.08 + range(this.rand, -0.15, 0.25),
+      state: 'approach',       // approach | windup | strike | recover | falling
+      timer: 0,
+      gait: range(this.rand, 0, Math.PI * 2),
+      swing: 0,                // 0 = sword raised, 1 = fully swung down
+      fall: 0,
+      hp: this.wave > 4 ? 2 : 1,
+      // Position is authoritative and steers straight at the player. An
+      // earlier version shrank a radius about the arena origin while measuring
+      // distance to the player's head — so with the player standing off-centre
+      // the opponents converged on the middle of the room and stopped, never
+      // reaching striking distance. They walked at a point nobody was at.
+      pos: new THREE.Vector3(Math.sin(angle) * spawnR, 0, -Math.cos(angle) * spawnR),
+      yaw: 0,
+      halo: this.glow.add(new THREE.Vector3(), PALETTE.accentPurple, 1.0, 0.22),
+    };
+    this.enemies.push(e);
+    return e;
+  }
+
+  _removeEnemy(e) {
+    this.glow.release(e.halo);
+    const zero = this._scratch.zero;
+    this.parts.head.setMatrixAt(e.slot, zero);
+    this.parts.torso.setMatrixAt(e.slot, zero);
+    this.parts.sword.setMatrixAt(e.slot, zero);
+    for (let k = 0; k < 4; k++) this.parts.limb.setMatrixAt(e.slot * 4 + k, zero);
+    this.parts.head.instanceMatrix.needsUpdate = true;
+    this.parts.torso.instanceMatrix.needsUpdate = true;
+    this.parts.sword.instanceMatrix.needsUpdate = true;
+    this.parts.limb.instanceMatrix.needsUpdate = true;
+    const i = this.enemies.indexOf(e);
+    if (i >= 0) this.enemies.splice(i, 1);
   }
 
   // ------------------------------------------------------------------ blade
 
   _buildBlade() {
-    // Parented to the rig, positioned each frame from the controller pose, so
-    // it stays correct whether the player is in XR or on a mouse.
     this.bladeRoot = new THREE.Group();
     this.engine.rig.add(this.bladeRoot);
     this.bladeRoot.visible = false;
 
     const hilt = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.022, 0.028, 0.18, 8),
-      this.mats.darkMetal
+      new THREE.CylinderGeometry(0.022, 0.028, 0.18, 8), this.mats.darkMetal
     );
     hilt.position.y = -0.09;
     this.bladeRoot.add(hilt);
+    this.bladeRoot.add(new THREE.Mesh(
+      new THREE.BoxGeometry(0.17, 0.022, 0.045), this.mats.darkMetal
+    ));
 
-    const guard = new THREE.Mesh(
-      new THREE.BoxGeometry(0.16, 0.02, 0.04), this.mats.darkMetal
-    );
-    this.bladeRoot.add(guard);
-
-    this.bladeMat = neonMaterial(PALETTE.accentBlue, 2.8);
+    this.bladeMat = neonMaterial(PALETTE.accentBlue, 2.6);
     const blade = new THREE.Mesh(
-      new THREE.BoxGeometry(0.045, BLADE_LENGTH, 0.012), this.bladeMat
+      new THREE.BoxGeometry(0.048, BLADE_LENGTH, 0.013), this.bladeMat
     );
     blade.position.y = BLADE_LENGTH / 2;
     this.bladeRoot.add(blade);
 
-    // Trail: a short ribbon of the tip's recent positions. This is the main
-    // feedback that the blade has weight, because it visibly lags the hand.
     this.trailLength = 14;
     this._trailPts = Array.from({ length: this.trailLength }, () => new THREE.Vector3());
     const trailGeo = new THREE.BufferGeometry();
-    trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.trailLength * 3), 3));
+    trailGeo.setAttribute('position',
+      new THREE.BufferAttribute(new Float32Array(this.trailLength * 3), 3));
     this.trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({
       color: new THREE.Color(PALETTE.accentBlue),
       transparent: true, opacity: 0.5, toneMapped: false, fog: false,
@@ -219,8 +281,6 @@ export class Sword {
     this.trail.frustumCulled = false;
     this.group.add(this.trail);
 
-    // Simulated blade state. `_swing` lags the controller, which is the
-    // inertia the design leans on.
     this._bladeQuat = new THREE.Quaternion();
     this._bladePos = new THREE.Vector3();
     this._tipVel = 0;
@@ -229,8 +289,6 @@ export class Sword {
   // -------------------------------------------------------------------- HUD
 
   _buildHUD() {
-    // Mounted on the arena rim rather than floating in vision, per the
-    // diegetic-UI pillar.
     this.hudCanvas = document.createElement('canvas');
     this.hudCanvas.width = 512;
     this.hudCanvas.height = 256;
@@ -244,10 +302,9 @@ export class Sword {
         map: this.hudTex, transparent: true, toneMapped: false, fog: false,
       })
     );
-    panel.position.set(0, 2.9, -ARENA_R + 1.6);
+    panel.position.set(0, 3.0, -ARENA_R + 1.4);
     panel.rotation.x = 0.12;
     this.group.add(panel);
-    this.hudPanel = panel;
   }
 
   _drawHUD() {
@@ -264,137 +321,50 @@ export class Sword {
       c.textAlign = 'center';
       c.fillStyle = PALETTE.accentGreen;
       c.font = '600 44px ui-sans-serif, system-ui, sans-serif';
-      c.fillText('STEEL GARDEN', 256, 34);
+      c.fillText('STEEL GARDEN', 256, 28);
       c.fillStyle = '#a8c4e8';
-      c.font = '400 22px ui-sans-serif, system-ui, sans-serif';
-      c.fillText('Match your blade to the warning line', 256, 104);
-      c.fillText('Trigger to begin  ·  grip to leave', 256, 140);
+      c.font = '400 21px ui-sans-serif, system-ui, sans-serif';
+      c.fillText('Swing to cut. Put your blade in theirs to block.', 256, 96);
+      c.fillText('It does not stop. Trigger to begin.', 256, 130);
       if (this.best) {
         c.fillStyle = '#7f93b8';
         c.font = '400 19px ui-sans-serif, system-ui, sans-serif';
         c.fillText(`best  ${this.best}`, 256, 190);
       }
-    } else if (this.state === 'cleared' || this.state === 'defeated') {
+    } else if (this.state === 'dead') {
       c.textAlign = 'center';
-      c.fillStyle = this.state === 'cleared' ? PALETTE.accentGreen : PALETTE.accentPurple;
-      c.font = '700 46px ui-sans-serif, system-ui, sans-serif';
-      c.fillText(this.state === 'cleared' ? 'GARDEN CLEARED' : 'DISSOLVED', 256, 30);
+      c.fillStyle = PALETTE.accentPurple;
+      c.font = '700 48px ui-sans-serif, system-ui, sans-serif';
+      c.fillText('YOU DIED', 256, 26);
       c.fillStyle = '#eaf4ff';
       c.font = '500 30px ui-sans-serif, system-ui, sans-serif';
-      c.fillText(`${this.score}   ·   wave ${this.wave}`, 256, 100);
+      c.fillText(`${this.kills} felled  ·  wave ${this.wave}`, 256, 98);
       c.fillStyle = '#7f93b8';
       c.font = '400 20px ui-sans-serif, system-ui, sans-serif';
-      c.fillText(`${this.parries} parries    best ${this.best}`, 256, 148);
+      c.fillText(`score ${this.score}    best ${this.best}`, 256, 146);
       c.fillText('trigger to fight again  ·  grip to leave', 256, 192);
     } else {
       c.textAlign = 'left';
       c.fillStyle = '#eaf4ff';
       c.font = '600 30px ui-sans-serif, system-ui, sans-serif';
-      c.fillText(`WAVE ${this.wave}`, 26, 24);
+      c.fillText(`WAVE ${this.wave}`, 26, 22);
       c.font = '600 52px ui-sans-serif, system-ui, sans-serif';
-      c.fillText(String(this.score), 26, 66);
-
+      c.fillText(String(this.score), 26, 62);
       c.font = '400 20px ui-sans-serif, system-ui, sans-serif';
       c.fillStyle = '#7f93b8';
-      c.fillText(`${this.parries} parries`, 26, 136);
+      c.fillText(`${this.kills} felled`, 26, 132);
 
-      // Health as three marks, not a bar — discrete state is far easier to
-      // read at a glance in a headset than a continuously shrinking bar.
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < START_HEALTH; i++) {
         c.fillStyle = i < this.health ? PALETTE.accentGreen : '#243049';
-        c.fillRect(26 + i * 46, 178, 36, 12);
+        c.fillRect(26 + i * 40, 176, 30, 12);
       }
 
       c.textAlign = 'right';
       c.fillStyle = '#7f93b8';
       c.font = '400 20px ui-sans-serif, system-ui, sans-serif';
-      c.fillText(`${this.enemies.length} active`, 486, 24);
+      c.fillText(`${this.enemies.length} closing`, 486, 22);
     }
     this.hudTex.needsUpdate = true;
-  }
-
-  // ----------------------------------------------------------------- enemies
-
-  _spawnEnemy() {
-    const angle = range(this.rand, -FRONT_ARC, FRONT_ARC);
-    const g = new THREE.Group();
-
-    // Angular hologram: an octahedron core inside a wireframe cage. No face,
-    // nothing anatomical.
-    const core = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.34, 0),
-      new THREE.MeshStandardMaterial({
-        color: new THREE.Color('#000000'),
-        emissive: new THREE.Color(PALETTE.accentPurple),
-        emissiveIntensity: 2.0,
-        transparent: true, opacity: 0.55,
-        roughness: 1, metalness: 0,
-      })
-    );
-    g.add(core);
-
-    const cage = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.55, 0),
-      new THREE.MeshBasicMaterial({
-        color: new THREE.Color(PALETTE.accentPurple),
-        wireframe: true, transparent: true, opacity: 0.45,
-        toneMapped: false, fog: false,
-      })
-    );
-    g.add(cage);
-
-    // The telegraph: a bar showing the angle the strike will arrive along.
-    // The player must present the blade *across* it.
-    const tell = new THREE.Mesh(
-      new THREE.BoxGeometry(1.5, 0.06, 0.06),
-      new THREE.MeshBasicMaterial({
-        color: new THREE.Color(PALETTE.accentGreen),
-        transparent: true, opacity: 0, toneMapped: false, fog: false,
-      })
-    );
-    g.add(tell);
-
-    g.position.set(Math.sin(angle) * ARENA_R, 1.3, -Math.cos(angle) * ARENA_R);
-    this.group.add(g);
-
-    const halo = this.glow.add(g.position, PALETTE.accentPurple, 1.6, 0.35);
-
-    const enemy = {
-      group: g, core, cage, tell, halo,
-      angle,
-      radius: ARENA_R,
-      speed: range(this.rand, 0.55, 0.95) + this.wave * 0.06,
-      // Strike axis: the angle in the player's view plane along which the
-      // blow travels. Parry by holding the blade perpendicular to it.
-      strikeAngle: range(this.rand, 0, Math.PI),
-      windup: 0,
-      state: 'approach',      // approach | telegraph | struck | dying
-      bob: range(this.rand, 0, Math.PI * 2),
-      dissolve: 0,
-    };
-    this.enemies.push(enemy);
-    return enemy;
-  }
-
-  _killEnemy(e, parried) {
-    e.state = 'dying';
-    e.dissolve = 0;
-    this.score += parried ? 150 : 60;
-    if (parried) this.parries++;
-    this.audio?.ping(parried ? 1180 : 640);
-  }
-
-  _removeEnemy(e) {
-    this.group.remove(e.group);
-    e.core.geometry.dispose();
-    e.core.material.dispose();
-    e.cage.geometry.dispose();
-    e.cage.material.dispose();
-    e.tell.geometry.dispose();
-    e.tell.material.dispose();
-    this.glow.release(e.halo);
-    const i = this.enemies.indexOf(e);
-    if (i >= 0) this.enemies.splice(i, 1);
   }
 
   // -------------------------------------------------------------------- flow
@@ -404,20 +374,19 @@ export class Sword {
     this.group.visible = true;
     this.bladeRoot.visible = true;
     this.state = 'ready';
-    this.wave = 0;
+    this.wave = 1;
+    this.kills = 0;
     this.score = 0;
-    this.parries = 0;
-    this.health = 3;
+    this.health = START_HEALTH;
     this._spawnTimer = 0;
     for (const e of [...this.enemies]) this._removeEnemy(e);
-    this.audio?.setRacing(true);   // same ducking as the race: quiet the city
+    this.audio?.setRacing(true);
     this._drawHUD();
   }
 
   begin() {
     this.state = 'fighting';
-    this.wave = 1;
-    this._spawnTimer = 0.6;
+    this._spawnTimer = 0.5;
   }
 
   exit() {
@@ -430,20 +399,26 @@ export class Sword {
     this.onExit();
   }
 
-  _finish(won) {
-    this.state = won ? 'cleared' : 'defeated';
+  _die() {
+    this.state = 'dead';
     if (this.score > this.best) {
       this.best = this.score;
       try { localStorage.setItem('steelgarden.best', String(this.score)); } catch { /* quota */ }
     }
     for (const e of [...this.enemies]) this._removeEnemy(e);
+    this.audio?.ping(140);
   }
 
-  // ------------------------------------------------------------------- input
+  // ------------------------------------------------------------------ input
+
+  bindKeys(keys) { this._keys = keys; }
+  bindControllers(list) { this._controllers = list; }
 
   _readInput() {
-    let trigger = false, grip = false;
-    let hand = null;
+    if (this.inputLocked) {
+      return { trigger: false, grip: false, hand: this._controllers?.[0] ?? null };
+    }
+    let trigger = false, grip = false, hand = null;
     const session = this.engine.renderer.xr.getSession?.();
     if (session) {
       for (const src of session.inputSources) {
@@ -451,7 +426,6 @@ export class Sword {
         if (gp?.buttons[0]?.pressed) trigger = true;
         if (gp?.buttons[1]?.pressed) grip = true;
       }
-      // The dominant hand holds the blade; default to right.
       hand = this._controllers?.find((c) => c.userData.handedness === 'right')
           ?? this._controllers?.[0] ?? null;
     }
@@ -462,14 +436,7 @@ export class Sword {
     return { trigger, grip, hand };
   }
 
-  bindKeys(keys) { this._keys = keys; }
-  bindControllers(list) { this._controllers = list; }
-
-  /**
-   * Blade pose. In XR it follows the controller with a lag; on desktop it
-   * follows the mouse, so the mode is at least explorable without a headset.
-   */
-  _updateBlade(dt, ctx) {
+  _updateBlade(dt) {
     const sc = this._scratch;
     const xr = this.engine.renderer.xr.isPresenting;
     const { hand } = this._readInput();
@@ -477,36 +444,36 @@ export class Sword {
     sc.tipPrev.copy(sc.tip);
 
     if (xr && hand) {
-      // Rig-local target pose from the controller.
-      sc.m.copy(hand.matrix);
-      const targetPos = sc.v.setFromMatrixPosition(sc.m);
-      const targetQuat = sc.q.setFromRotationMatrix(sc.m);
-
-      // Position tracks tightly; rotation lags. That split is deliberate — a
-      // laggy *position* feels broken, a laggy *angle* feels heavy.
-      this._bladePos.lerp(targetPos, Math.min(1, dt * 26));
-      this._bladeQuat.slerp(targetQuat, Math.min(1, dt * 13));
+      sc.v.setFromMatrixPosition(hand.matrix);
+      sc.q.setFromRotationMatrix(hand.matrix);
+      // Position tracks hard, rotation only slightly softened. Enough weight
+      // to feel like steel, not so much that the sword fights you — the first
+      // version lagged rotation so heavily you could not aim a cut.
+      this._bladePos.lerp(sc.v, Math.min(1, dt * 34));
+      this._bladeQuat.slerp(sc.q, Math.min(1, dt * 22));
     } else {
-      // Desktop: swing from the camera, driven by look direction.
       const cam = this.engine.camera;
-      sc.v.set(0.22, -0.28, -0.55).applyQuaternion(cam.quaternion).add(cam.position);
-      this._bladePos.lerp(sc.v, Math.min(1, dt * 20));
+      sc.v.set(0.24, -0.26, -0.5).applyQuaternion(cam.quaternion).add(cam.position);
+      this._bladePos.lerp(sc.v, Math.min(1, dt * 22));
       sc.q.copy(cam.quaternion);
-      this._bladeQuat.slerp(sc.q, Math.min(1, dt * 10));
+      this._bladeQuat.slerp(sc.q, Math.min(1, dt * 14));
     }
 
     this.bladeRoot.position.copy(this._bladePos);
     this.bladeRoot.quaternion.copy(this._bladeQuat);
-
-    // World-space tip and base, for hit tests.
     this.bladeRoot.updateMatrixWorld();
+
     sc.base.setFromMatrixPosition(this.bladeRoot.matrixWorld);
     sc.tip.set(0, BLADE_LENGTH, 0).applyMatrix4(this.bladeRoot.matrixWorld);
     sc.dir.subVectors(sc.tip, sc.base).normalize();
-
     this._tipVel = dt > 0 ? sc.tip.distanceTo(sc.tipPrev) / dt : 0;
 
-    // Trail, oldest first.
+    // Cache the blade in arena space once per frame; every hit test reuses it.
+    sc.bladeA.copy(sc.base);
+    sc.bladeB.copy(sc.tip);
+    this.group.worldToLocal(sc.bladeA);
+    this.group.worldToLocal(sc.bladeB);
+
     for (let i = this.trailLength - 1; i > 0; i--) this._trailPts[i].copy(this._trailPts[i - 1]);
     this._trailPts[0].copy(sc.tip);
     const arr = this.trail.geometry.attributes.position.array;
@@ -516,153 +483,231 @@ export class Sword {
       arr[i * 3 + 2] = this._trailPts[i].z;
     }
     this.trail.geometry.attributes.position.needsUpdate = true;
-    this.trail.material.opacity = THREE.MathUtils.clamp(this._tipVel * 0.06, 0.06, 0.7);
-
-    // The blade brightens as it moves, which reads as charge without any UI.
-    this.bladeMat.emissiveIntensity = 2.2 + Math.min(this._tipVel * 0.16, 2.4);
+    this.trail.material.opacity = THREE.MathUtils.clamp(this._tipVel * 0.06, 0.06, 0.75);
+    this.bladeMat.emissiveIntensity = 2.2 + Math.min(this._tipVel * 0.14, 2.2);
   }
 
-  // ------------------------------------------------------------------ update
+  // ----------------------------------------------------------------- update
 
   update(dt, ctx) {
     if (!this.active) return;
-
     const input = this._readInput();
-    this._updateBlade(dt, ctx);
+    this._updateBlade(dt);
 
-    if (this.state === 'ready' || this.state === 'cleared' || this.state === 'defeated') {
+    if (this.state === 'ready' || this.state === 'dead') {
       if (input.trigger && !this._triggerHeld) {
         if (this.state === 'ready') this.begin();
         else this.enter();
       }
-      if (input.grip) this.exit();
       this._triggerHeld = input.trigger;
+      if (input.grip) this.exit();
       this._drawHUD();
       return;
     }
     this._triggerHeld = input.trigger;
     if (input.grip) { this.exit(); return; }
 
-    // --- spawning
+    // Waves ramp with kills. The pressure never stops, it only grows.
+    this.wave = 1 + Math.floor(this.kills / 5);
+    const target = Math.min(2 + Math.floor(this.wave / 2), MAX_ENEMIES);
     this._spawnTimer -= dt;
-    const target = Math.min(2 + Math.floor(this.wave / 2), 5);
     if (this._spawnTimer <= 0 && this.enemies.length < target) {
       this._spawnEnemy();
-      this._spawnTimer = Math.max(0.9, 2.6 - this.wave * 0.15);
+      this._spawnTimer = Math.max(0.7, 2.4 - this.wave * 0.14);
     }
 
     this._updateEnemies(dt, ctx);
-
-    // Wave advances on score, so a cautious player is not punished with an
-    // endless stream while a fast one is not starved.
-    const nextWave = 1 + Math.floor(this.score / 600);
-    if (nextWave > this.wave) {
-      this.wave = nextWave;
-      this.audio?.ping(1400);
-    }
-    if (this.wave > 8) this._finish(true);
-    if (this.health <= 0) this._finish(false);
-
+    if (this.health <= 0) this._die();
     this._drawHUD();
   }
 
   _updateEnemies(dt, ctx) {
     const sc = this._scratch;
-    const head = ctx.engine.headPosition(sc.head);
-    // Head position is world-space; the arena is centred on the group origin.
-    const originY = this.group.position.y;
+    // The arena is a child group, so bring the head into arena space once
+    // rather than pushing every enemy out into world space.
+    const headLocal = sc.v2.copy(ctx.engine.headPosition(sc.head));
+    this.group.worldToLocal(headLocal);
 
     for (const e of [...this.enemies]) {
-      if (e.state === 'dying') {
-        e.dissolve += dt * 2.6;
-        const k = 1 - e.dissolve;
-        e.core.material.opacity = Math.max(0, 0.55 * k);
-        e.cage.material.opacity = Math.max(0, 0.45 * k);
-        e.group.scale.setScalar(1 + e.dissolve * 0.7);
-        e.group.rotation.y += dt * 6;
-        e.halo.opacity = Math.max(0, 0.35 * k);
-        if (e.dissolve >= 1) this._removeEnemy(e);
+      if (e.state === 'falling') {
+        e.fall += dt * 2.2;
+        if (e.fall >= 1) { this._removeEnemy(e); continue; }
+        this._poseEnemy(e);
         continue;
       }
 
-      // Drift inward until inside strike range, then wind up.
-      if (e.state === 'approach') {
-        e.radius -= e.speed * dt;
-        if (e.radius <= 2.3) {
-          e.state = 'telegraph';
-          e.windup = 0;
-        }
-      } else if (e.state === 'telegraph') {
-        e.windup += dt;
-        const k = Math.min(e.windup / TELEGRAPH, 1);
-        e.tell.material.opacity = 0.25 + k * 0.75;
-        e.tell.scale.setScalar(0.6 + k * 0.5);
-        e.core.material.emissiveIntensity = 2.0 + k * 3.5;
+      let dx = headLocal.x - e.pos.x;
+      let dz = headLocal.z - e.pos.z;
+      let distance = Math.hypot(dx, dz) || 1e-4;
+      e.yaw = Math.atan2(dx, dz);
 
-        if (e.windup >= TELEGRAPH) {
-          this._resolveStrike(e);
+      if (e.state === 'approach') {
+        if (distance > STRIKE_RANGE) {
+          const stepLen = Math.min(e.speed * dt, distance - STRIKE_RANGE);
+          e.pos.x += (dx / distance) * stepLen;
+          e.pos.z += (dz / distance) * stepLen;
+          e.gait += dt * e.speed * 5.5;
+          distance -= stepLen;
+        } else {
+          e.state = 'windup';
+          e.timer = 0;
+          e.swing = 0;
+        }
+      } else if (e.state === 'windup') {
+        e.timer += dt;
+        e.swing = 0;
+        if (e.timer >= WINDUP) { e.state = 'strike'; e.timer = 0; }
+      } else if (e.state === 'strike') {
+        e.timer += dt;
+        e.swing = Math.min(1, e.timer / 0.16);
+        if (e.swing >= 1) {
+          this._resolveEnemyStrike(e, headLocal, distance);
+          e.state = 'recover';
+          e.timer = 0;
+        }
+      } else if (e.state === 'recover') {
+        e.timer += dt;
+        e.swing = Math.max(0, 1 - e.timer / RECOVER);
+        if (e.timer >= RECOVER) {
+          e.state = 'approach';
+          this._stepBack(e, headLocal, 0.7);
         }
       }
 
-      e.bob += dt * 2.2;
-      const x = Math.sin(e.angle) * e.radius;
-      const z = -Math.cos(e.angle) * e.radius;
-      e.group.position.set(x, 1.3 + Math.sin(e.bob) * 0.12, z);
-      e.group.rotation.y += dt * 0.8;
-      e.cage.rotation.x += dt * 0.5;
-      e.halo.setPosition(x, originY + e.group.position.y, z);
+      // Your cut. Needs speed — resting the blade on someone does nothing.
+      sc.v.set(e.pos.x, 1.05, e.pos.z);
+      if (this._distanceToBlade(sc.v) < 0.55 && this._tipVel > KILL_SPEED) this._cut(e);
+      if (e.knockback) { this._stepBack(e, headLocal, e.knockback); e.knockback = 0; }
 
-      // Keep the telegraph bar facing the player, rotated to the strike axis.
-      e.tell.rotation.set(0, 0, e.strikeAngle);
-      e.tell.lookAt(head.x, head.y, head.z);
-      e.tell.rotateZ(e.strikeAngle);
+      this._poseEnemy(e);
     }
+  }
+
+  /** Push an opponent directly away from the player, staying inside the arena. */
+  _stepBack(e, headLocal, amount) {
+    const dx = e.pos.x - headLocal.x;
+    const dz = e.pos.z - headLocal.z;
+    const d = Math.hypot(dx, dz) || 1;
+    e.pos.x += (dx / d) * amount;
+    e.pos.z += (dz / d) * amount;
+    const r = Math.hypot(e.pos.x, e.pos.z);
+    if (r > ARENA_R - 0.5) {
+      e.pos.x *= (ARENA_R - 0.5) / r;
+      e.pos.z *= (ARENA_R - 0.5) / r;
+    }
+  }
+
+  /** Shortest distance from an arena-space point to the player's blade segment. */
+  _distanceToBlade(pointLocal) {
+    const { bladeA: a, bladeB: b } = this._scratch;
+    const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z;
+    const apx = pointLocal.x - a.x, apy = pointLocal.y - a.y, apz = pointLocal.z - a.z;
+    const len2 = abx * abx + aby * aby + abz * abz;
+    const t = len2 > 0
+      ? THREE.MathUtils.clamp((apx * abx + apy * aby + apz * abz) / len2, 0, 1)
+      : 0;
+    return Math.hypot(
+      pointLocal.x - (a.x + abx * t),
+      pointLocal.y - (a.y + aby * t),
+      pointLocal.z - (a.z + abz * t)
+    );
+  }
+
+  _cut(e) {
+    e.hp--;
+    this.audio?.ping(900 + this.rand() * 300);
+    if (e.hp > 0) {
+      // Staggered: knocked out of whatever they were doing, pushed back.
+      e.state = 'recover';
+      e.timer = 0;
+      e.knockback = 0.9;
+      this.score += 25;
+      return;
+    }
+    e.state = 'falling';
+    e.fall = 0;
+    this.kills++;
+    this.score += 100;
   }
 
   /**
-   * The moment of contact. A parry requires the blade to be roughly
-   * perpendicular to the strike axis *and* reasonably still — you cannot
-   * windmill your way through, because a fast blade is never presented at a
-   * stable angle.
+   * Their blade comes down. You block by having your sword near theirs — a
+   * positional test, because putting your sword in the way is what every
+   * player instinctively tries to do.
    */
-  _resolveStrike(e) {
+  _resolveEnemyStrike(e, headLocal, distance) {
     const sc = this._scratch;
+    const dx = headLocal.x - e.pos.x;
+    const dz = headLocal.z - e.pos.z;
+    const d = Math.hypot(dx, dz) || 1;
+    // Where their sword ends the swing: in front of them, at chest height, on
+    // the line towards you.
+    const impact = sc.v.set(
+      e.pos.x + (dx / d) * 0.9,
+      1.15,
+      e.pos.z + (dz / d) * 0.9
+    );
 
-    // Strike axis in world space, in the plane facing the player.
-    sc.toEnemy.copy(e.group.position).sub(sc.base).normalize();
-    const right = sc.v.crossVectors(sc.toEnemy, UP).normalize();
-    const upish = new THREE.Vector3().crossVectors(right, sc.toEnemy).normalize();
-    const axis = right.multiplyScalar(Math.cos(e.strikeAngle))
-      .addScaledVector(upish, Math.sin(e.strikeAngle))
-      .normalize();
-
-    // How perpendicular is the blade to the strike axis?
-    const alignment = Math.abs(sc.dir.dot(axis));       // 0 = perpendicular
-    const perpendicular = 1 - alignment;
-
-    const inRange = sc.tip.distanceTo(e.group.position) < 2.2
-                 || sc.base.distanceTo(e.group.position) < 2.2;
-    const controlled = this._tipVel < 7.5;              // not windmilling
-
-    if (perpendicular > 0.55 && inRange && controlled) {
-      this._killEnemy(e, true);
+    if (this._distanceToBlade(impact) < BLOCK_RADIUS) {
+      this.audio?.ping(520);
+      this.score += 15;
       this.bladeMat.emissive.set(PALETTE.accentGreen);
-      setTimeout(() => this.bladeMat.emissive.set(PALETTE.accentBlue), 160);
-    } else if (perpendicular > 0.35 && inRange) {
-      // Glancing block: the enemy survives and resets, no damage taken.
-      e.state = 'approach';
-      e.radius = 3.4;
-      e.strikeAngle = range(this.rand, 0, Math.PI);
-      e.tell.material.opacity = 0;
-      e.core.material.emissiveIntensity = 2.0;
-      this.audio?.ping(420);
-    } else {
+      setTimeout(() => this.bladeMat.emissive.set(PALETTE.accentBlue), 140);
+    } else if (distance < STRIKE_RANGE + 0.6) {
       this.health--;
-      this._killEnemy(e, false);
-      this.score = Math.max(0, this.score - 40);
-      this.audio?.ping(180);
+      this.audio?.ping(200);
     }
+  }
+
+  /** Write every body part's matrix for one enemy. */
+  _poseEnemy(e) {
+    const sc = this._scratch;
+    const fallen = e.state === 'falling' ? e.fall : 0;
+
+    sc.e.set(fallen * -1.35, e.yaw, 0, 'YXZ');
+    sc.q.setFromEuler(sc.e);
+    sc.p.set(e.pos.x, e.pos.y + fallen * 0.1, e.pos.z);
+    sc.s.setScalar(1);
+    sc.enemyM.compose(sc.p, sc.q, sc.s);
+
+    const put = (mesh, index, x, y, z, rx, rz, sx = 1, sy = 1, sz = 1) => {
+      sc.e.set(rx, 0, rz, 'YXZ');
+      sc.q.setFromEuler(sc.e);
+      sc.p.set(x, y, z);
+      sc.s.set(sx, sy, sz);
+      sc.localM.compose(sc.p, sc.q, sc.s);
+      sc.partM.multiplyMatrices(sc.enemyM, sc.localM);
+      mesh.setMatrixAt(index, sc.partM);
+    };
+
+    const step = e.state === 'approach' ? Math.sin(e.gait) * 0.5 : 0;
+
+    put(this.parts.torso, e.slot, 0, 1.05, 0, 0, 0);
+    put(this.parts.head, e.slot, 0, 1.48, 0, 0, 0);
+    put(this.parts.limb, e.slot * 4 + 0, -0.11, 0.5, 0, step, 0);
+    put(this.parts.limb, e.slot * 4 + 1, 0.11, 0.5, 0, -step, 0);
+    put(this.parts.limb, e.slot * 4 + 2, -0.28, 1.12, 0, -step * 0.5, 0.25, 0.8, 0.85, 0.8);
+
+    // Sword arm: raised through the windup, chops down through the strike.
+    const armPitch = THREE.MathUtils.lerp(-2.1, 0.65, e.swing);
+    put(this.parts.limb, e.slot * 4 + 3, 0.28, 1.12, 0, armPitch, -0.2, 0.8, 0.85, 0.8);
+    const handY = 1.12 - Math.cos(armPitch) * 0.26;
+    const handZ = -Math.sin(armPitch) * 0.26;
+    put(this.parts.sword, e.slot, 0.3, handY, handZ, armPitch, -0.2);
+
+    this.parts.head.instanceMatrix.needsUpdate = true;
+    this.parts.torso.instanceMatrix.needsUpdate = true;
+    this.parts.limb.instanceMatrix.needsUpdate = true;
+    this.parts.sword.instanceMatrix.needsUpdate = true;
+
+    // The halo brightens through the windup — the tell that a blow is coming.
+    e.halo.opacity = e.state === 'falling'
+      ? 0.22 * (1 - fallen)
+      : (e.state === 'windup' ? 0.25 + (e.timer / WINDUP) * 0.85 : 0.22);
+    const world = sc.p.set(e.pos.x, 1.2, e.pos.z);
+    this.group.localToWorld(world);
+    e.halo.setPosition(world.x, world.y, world.z);
   }
 }
 
-export { ARENA_R };
+export { ARENA_R, MAX_ENEMIES };

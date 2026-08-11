@@ -135,6 +135,10 @@ async function main() {
       stats.update(dt);
       sky.update(dt, ctx);
       wrist.update(dt, ctx);
+      wrist.updateCursor(pointingHand());
+      // The panel swallows game input while it is open.
+      racing.inputLocked = wrist.visible;
+      sword.inputLocked = wrist.visible;
       if (racing.active || sword.active) return;
       player.update(dt, ctx);
       racePad.update(dt, ctx);
@@ -163,19 +167,27 @@ async function main() {
     } else if (dojoPad.armed) {
       stash();
       // Drop the rig into the arena; the city stays drawn far below.
-      engine.rig.position.set(0, 120, 3.5);
+      engine.rig.position.set(0, 120, 0);
       engine.rig.quaternion.identity();
       sword.enter();
     }
   };
 
+  // While the panel is up it owns the trigger and the grip. Without this the
+  // grip both raised the panel *and* was the leave-the-game button, so opening
+  // settings inside a game dumped you back to the plaza at the same time.
+  const pointingHand = () =>
+    player._controllers.find((c) => c.userData.handedness === 'right')
+    ?? player._controllers[0];
+
   for (const ctrl of player._controllers) {
     ctrl.addEventListener('selectstart', () => {
       if (wrist.handleSelect(ctrl)) return;
+      if (wrist.visible) return;      // aiming at the panel and missing is not a world action
       player.trySit();
       tryLaunch();
     });
-    // Squeeze on the left controller raises the wrist device.
+    // Grip on the left controller raises the wrist device.
     ctrl.addEventListener('squeezestart', () => {
       if (ctrl.userData.handedness === 'left') wrist.toggle();
     });

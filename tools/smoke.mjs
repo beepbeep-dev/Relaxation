@@ -117,23 +117,37 @@ const race = await page.evaluate(() => {
   // Fixed 72Hz steps. Driving update() directly makes the result independent
   // of how slowly SwiftShader happens to be pacing frames, so this asserts the
   // simulation rather than the test machine.
+  // Hold the throttle. Without it the car correctly coasts at part-throttle
+  // and we would be measuring an idling lap, not a racing one.
+  k.racing.bindKeys(k.player._keys);
+  k.player._keys.add('Space');
+
   const ctx = { engine: k.engine, elapsed: 0, dt: 1 / 72 };
   let laps = 0;
+  let topSpeed = 0;
+  const rivalStart = k.racing.rivals.map((r) => r.t);
   for (let i = 0; i < 72 * 240 && k.racing.state !== 'finished'; i++) {
     ctx.elapsed += 1 / 72;
     k.racing.update(1 / 72, ctx);
+    topSpeed = Math.max(topSpeed, k.racing.speed);
     laps = k.racing.lap;
   }
+  k.player._keys.delete('Space');
 
   return {
     state: k.racing.state,
     advanced: k.racing.t !== before,
-    topSpeed: k.racing.speed,
+    topSpeed,
+    topKmh: Math.round(topSpeed * 3.6),
     laps,
     lapTimes: k.racing.lapTimes.map((t) => +t.toFixed(2)),
     gatesHit: k.racing._gatesHitTotal ?? null,
     rigY: k.engine.rig.position.y,
-    offsetInBounds: Math.abs(k.racing.offset) <= 7.5,
+    offsetInBounds: Math.abs(k.racing.offset) <= 8.5,
+    rivals: k.racing.rivals.length,
+    rivalsMoved: k.racing.rivals.filter((r, i) => r.t !== rivalStart[i] || r.lap > 0).length,
+    rivalLaps: k.racing.rivals.map((r) => r.lap),
+    finishPlace: k.racing._finishPlace,
   };
 });
 console.log('\nrace:', race, '\n');
@@ -141,12 +155,31 @@ race.advanced ? ok('craft advances along the track') : fail('craft did not move'
 race.state === 'finished' ? ok('3-lap race completed') : fail(`race stalled in state "${race.state}"`);
 race.laps === 3 ? ok(`${race.laps} laps counted`) : fail(`expected 3 laps, got ${race.laps}`);
 race.lapTimes.length === 3 ? ok(`lap times ${race.lapTimes.join(' / ')}s`) : fail('lap times not recorded');
-race.topSpeed > 20 ? ok(`cruising at ${(race.topSpeed * 3.6).toFixed(0)} km/h`) : fail('craft not up to speed');
+// A racing car on a city circuit, not a missile. The first pass topped out at
+// 223 km/h down an 8m ribbon, which is unreadable rather than exciting.
+race.topKmh > 100 && race.topKmh < 170
+  ? ok(`tops out at ${race.topKmh} km/h — a car, not a missile`)
+  : fail(`top speed ${race.topKmh} km/h is outside the realistic band`);
+race.rivals === 5 ? ok('5 rivals on the grid') : fail(`expected 5 rivals, got ${race.rivals}`);
+race.rivalsMoved === race.rivals
+  ? ok(`all ${race.rivals} rivals raced (laps ${race.rivalLaps.join('/')})`)
+  : fail(`only ${race.rivalsMoved} of ${race.rivals} rivals moved`);
+// The grid starts behind the line, so rivals sit on lap -1 until they cross it.
+race.rivalLaps.every((l) => l >= 1)
+  ? ok('the whole field completed racing laps')
+  : fail(`rivals stalled on laps ${race.rivalLaps.join('/')}`);
+race.finishPlace >= 1 && race.finishPlace <= 6
+  ? ok(`finished P${race.finishPlace} of 6`)
+  : fail(`finish position ${race.finishPlace} is not a valid place`);
 race.gatesHit > 0 ? ok(`${race.gatesHit} boost gates hit`) : fail('no boost gates registered');
-race.rigY > 10 ? ok(`rig lifted onto the track at ${race.rigY.toFixed(1)}m`) : fail('rig not on track');
+// The circuit runs on the streets now, so the driver sits at road height —
+// the old assertion checked for a skyway that no longer exists.
+race.rigY > 0.6 && race.rigY < 3
+  ? ok(`seated at road height (${race.rigY.toFixed(2)}m)`)
+  : fail(`rig at ${race.rigY.toFixed(2)}m is not a driving position`);
 race.offsetInBounds ? ok('craft stayed on the ribbon') : fail('craft left the track');
 
-// --- STEEL GARDEN: enemies spawn, telegraph, and resolve into a parry or a hit
+// --- STEEL GARDEN: opponents walk in, swing, and kill an idle player
 const sword = await page.evaluate(() => {
   const k = window.__kaisei;
   if (k.racing.active) k.racing.exit();
@@ -154,42 +187,72 @@ const sword = await page.evaluate(() => {
   const entered = k.sword.state;
   k.sword.begin();
 
-  const ctx = { engine: k.engine, elapsed: 0, dt: 1 / 72 };
-  const step = () => { ctx.elapsed += 1 / 72; k.sword.update(1 / 72, ctx); };
+  // Stand where the game actually puts you, and refresh the matrices by hand.
+  // Driving update() without rendering leaves camera.matrixWorld frozen at the
+  // last drawn frame — which here is wherever the race left it, 110m away —
+  // so every distance check reads a stale head position.
+  k.engine.rig.position.set(0, 120, 0);
+  k.engine.rig.quaternion.identity();
+  k.engine.rig.updateMatrixWorld(true);
 
-  // Run until enemies exist and at least one has reached the telegraph phase,
-  // so we are asserting the state machine rather than the wall clock.
-  let sawTelegraph = false;
+  const ctx = { engine: k.engine, elapsed: 0, dt: 1 / 72 };
+  const step = () => {
+    ctx.elapsed += 1 / 72;
+    k.engine.rig.updateMatrixWorld(true);
+    k.sword.group.updateMatrixWorld(true);
+    k.sword.update(1 / 72, ctx);
+  };
+
+  const seen = new Set();
   let maxEnemies = 0;
-  for (let i = 0; i < 72 * 40; i++) {
+  let closest = 99;
+  let headXZ = null;
+  const V = k.engine.rig.position.constructor;
+  for (let i = 0; i < 72 * 60 && k.sword.state === 'fighting'; i++) {
     step();
     maxEnemies = Math.max(maxEnemies, k.sword.enemies.length);
-    if (k.sword.enemies.some((e) => e.state === 'telegraph')) sawTelegraph = true;
-    if (k.sword.state !== 'fighting') break;
+    const hl = k.engine.headPosition(new V()).clone();
+    k.sword.group.worldToLocal(hl);
+    headXZ = [+hl.x.toFixed(2), +hl.z.toFixed(2)];
+    for (const e of k.sword.enemies) {
+      seen.add(e.state);
+      closest = Math.min(closest, Math.hypot(e.pos.x - hl.x, e.pos.z - hl.z));
+    }
   }
 
   return {
     entered,
     maxEnemies,
-    sawTelegraph,
+    states: [...seen],
+    closest: +closest.toFixed(2),
+    headXZ,
     finalState: k.sword.state,
-    // A player who never moves the blade must lose health — if damage never
-    // lands, the mode has no stakes and the parry check is not wired up.
     health: k.sword.health,
-    score: k.sword.score,
     bladeVisible: k.sword.bladeRoot.visible,
     arenaY: k.sword.group.position.y,
+    // Body parts are pooled instanced meshes, so the pool must exist and be
+    // sized for the cap rather than growing per enemy.
+    poolSizes: {
+      head: k.sword.parts.head.count,
+      limb: k.sword.parts.limb.count,
+      sword: k.sword.parts.sword.count,
+    },
   };
 });
 console.log('\nsword:', sword, '\n');
 sword.entered === 'ready' ? ok('dojo opens on the ready screen') : fail(`entered as "${sword.entered}"`);
-sword.maxEnemies > 0 ? ok(`${sword.maxEnemies} enemies active at peak`) : fail('no enemies spawned');
-sword.sawTelegraph ? ok('enemies reach the telegraph phase') : fail('no enemy ever telegraphed');
+sword.maxEnemies > 0 ? ok(`${sword.maxEnemies} opponents at peak`) : fail('no opponents spawned');
+sword.states.includes('windup') ? ok('opponents wind up to strike') : fail('no opponent ever wound up');
+sword.states.includes('strike') ? ok('opponents complete a strike') : fail('no strike resolved');
+sword.closest < 3 ? ok(`opponents close to ${sword.closest}m`) : fail('opponents never closed the distance');
 sword.bladeVisible ? ok('blade is drawn') : fail('blade not visible');
-sword.arenaY > 50 ? ok(`arena sits at ${sword.arenaY}m, clear of the city`) : fail('arena overlaps the city');
-sword.health < 3 || sword.finalState === 'defeated'
-  ? ok(`an idle blade takes damage (health ${sword.health}, ${sword.finalState})`)
-  : fail('an idle player never took damage — strikes are not resolving');
+sword.arenaY > 50 ? ok(`arena at ${sword.arenaY}m, clear of the city`) : fail('arena overlaps the city');
+sword.finalState === 'dead'
+  ? ok('an idle player is killed — it does not stop')
+  : fail(`idle player survived 60s (state "${sword.finalState}", health ${sword.health})`);
+sword.poolSizes.limb === sword.poolSizes.head * 4
+  ? ok(`instanced body parts pooled (${sword.poolSizes.head} bodies, ${sword.poolSizes.limb} limbs)`)
+  : fail('limb pool is not four per body');
 
 await page.evaluate(() => { if (window.__kaisei.sword.active) window.__kaisei.sword.exit(); });
 
@@ -270,7 +333,15 @@ await page.evaluate(() => {
 });
 await page.waitForTimeout(400);
 await page.screenshot({ path: 'tools/shots/lounge.png' });
-await page.evaluate(() => { window.__kaisei.racing.enter(); window.__kaisei.racing._countdown = 0.01; });
+await page.evaluate(() => {
+  const k = window.__kaisei;
+  if (k.sword.active) k.sword.exit();
+  k.racing.enter();
+  k.racing._countdown = 0;
+  // Run the field forward so there are rivals in front of the camera.
+  const ctx = { engine: k.engine, elapsed: 0, dt: 1 / 72 };
+  for (let i = 0; i < 300; i++) { ctx.elapsed += 1 / 72; k.racing.update(1 / 72, ctx); }
+});
 await page.waitForTimeout(1200);
 await page.screenshot({ path: 'tools/shots/race.png' });
 
