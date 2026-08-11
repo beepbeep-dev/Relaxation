@@ -278,12 +278,22 @@ const textures = await page.evaluate(async () => {
     groundRepeat: lib.wetGround.map?.repeat.x ?? null,
     // A texture that failed to decode still attaches but has no image.
     decoded: !!lib.wetGround.map?.image?.width,
+    normals: {
+      ground: !!lib.wetGround.normalMap,
+      concrete: !!lib.concrete.normalMap,
+      panel: !!lib.darkMetal.normalMap,
+      wood: !!lib.deckWood.normalMap,
+      fabric: !!lib.cushion.normalMap,
+    },
   };
 });
 console.log('\ntextures:', textures, '\n');
 textures.ground && textures.concrete && textures.panel && textures.wood && textures.fabric
   ? ok('all five surface textures reached their materials')
   : fail(`surface textures missing: ${JSON.stringify(textures)}`);
+Object.values(textures.normals).every(Boolean)
+  ? ok('all five normal maps reached their materials')
+  : fail(`normal maps missing: ${JSON.stringify(textures.normals)}`);
 textures.decoded ? ok('surface texture decoded') : fail('surface texture attached but never decoded');
 
 // --- graphics settings actually reach the renderer

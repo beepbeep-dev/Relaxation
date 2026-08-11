@@ -195,20 +195,22 @@ const col = (hex) => new THREE.Color(hex);
  * subpath on GitHub Pages, and an absolute path would 404 there.
  */
 const SURFACE_TEXTURES = {
-  asphalt: { file: 'asphalt.jpg', repeat: 90 },
-  concrete: { file: 'concrete.jpg', repeat: 9 },
-  panel: { file: 'panel.jpg', repeat: 3 },
-  wood: { file: 'wood.jpg', repeat: 6 },
-  fabric: { file: 'fabric.jpg', repeat: 4 },
+  asphalt: { file: 'asphalt.jpg', normalFile: 'asphalt_n.jpg', repeat: 90, normalScale: 0.55 },
+  concrete: { file: 'concrete.jpg', normalFile: 'concrete_n.jpg', repeat: 9, normalScale: 0.8 },
+  panel: { file: 'panel.jpg', normalFile: 'panel_n.jpg', repeat: 3, normalScale: 0.5 },
+  wood: { file: 'wood.jpg', normalFile: 'wood_n.jpg', repeat: 6, normalScale: 0.6 },
+  fabric: { file: 'fabric.jpg', normalFile: 'fabric_n.jpg', repeat: 4, normalScale: 0.7 },
 };
 
 export function loadSurfaceTextures(onReady) {
   const loader = new THREE.TextureLoader();
   const base = import.meta.env?.BASE_URL ?? './';
   const out = {};
-  let pending = Object.keys(SURFACE_TEXTURES).length;
+  // Two files per surface (albedo + normal), each independently non-fatal.
+  let pending = Object.keys(SURFACE_TEXTURES).length * 2;
+  const settle = () => { if (--pending === 0) onReady?.(out); };
 
-  for (const [name, { file, repeat }] of Object.entries(SURFACE_TEXTURES)) {
+  for (const [name, { file, normalFile, repeat }] of Object.entries(SURFACE_TEXTURES)) {
     loader.load(
       `${base}textures/${file}`,
       (tex) => {
@@ -217,10 +219,22 @@ export function loadSurfaceTextures(onReady) {
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = 4;
         out[name] = tex;
-        if (--pending === 0) onReady?.(out);
+        settle();
       },
       undefined,
-      () => { if (--pending === 0) onReady?.(out); }   // missing file is not fatal
+      settle   // missing file is not fatal
+    );
+    loader.load(
+      `${base}textures/${normalFile}`,
+      (tex) => {
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(repeat, repeat);
+        // Normal maps are per-channel vector data, never sRGB-decoded.
+        out[`${name}_n`] = tex;
+        settle();
+      },
+      undefined,
+      settle
     );
   }
   return out;
@@ -229,18 +243,30 @@ export function loadSurfaceTextures(onReady) {
 /**
  * Swap the photographic maps onto the standing materials.
  *
- * They go on as `map` only. The albedo is near-greyscale by construction, so
+ * Albedo goes on as `map` only — it is near-greyscale by construction, so
  * multiplying it against each material's palette colour adds grain without
- * letting a texture bring its own hue into a strict three-colour script — and
- * the existing roughness and normal maps keep doing their jobs untouched.
+ * letting a texture bring its own hue into a strict three-colour script.
+ * The normal map replaces whatever procedural bump (or none) the material
+ * started with: it is a Sobel filter over this exact albedo's own grain
+ * (see tools/imagegen/make_textures.py), so it is the one normal map that is
+ * actually correlated with what is on screen rather than generic noise.
  */
 export function applySurfaceTextures(tex) {
   const lib = library();
-  if (tex.asphalt) { lib.wetGround.map = tex.asphalt; lib.wetGround.needsUpdate = true; }
-  if (tex.concrete) { lib.concrete.map = tex.concrete; lib.concrete.needsUpdate = true; }
-  if (tex.panel) { lib.darkMetal.map = tex.panel; lib.darkMetal.needsUpdate = true; }
-  if (tex.wood) { lib.deckWood.map = tex.wood; lib.deckWood.needsUpdate = true; }
-  if (tex.fabric) { lib.cushion.map = tex.fabric; lib.cushion.needsUpdate = true; }
+  const swap = (mat, name) => {
+    if (tex[name]) { mat.map = tex[name]; mat.needsUpdate = true; }
+    if (tex[`${name}_n`]) {
+      mat.normalMap = tex[`${name}_n`];
+      const s = SURFACE_TEXTURES[name].normalScale;
+      mat.normalScale.set(s, s);
+      mat.needsUpdate = true;
+    }
+  };
+  swap(lib.wetGround, 'asphalt');
+  swap(lib.concrete, 'concrete');
+  swap(lib.darkMetal, 'panel');
+  swap(lib.deckWood, 'wood');
+  swap(lib.cushion, 'fabric');
 }
 
 let cache = null;
