@@ -12,8 +12,8 @@ The city is the game. No quests, no levels, no timers, nothing that expires.
 |---|---|
 | **Kaisei, street level** | Procedural neon city — walkable, wet, raining if you want it to. Aircars, rooftop plant, lit vending machines, a distant skyline |
 | **The Lantern** | The chill space. A rooftop deck up a lit ramp: cushions you can sit on, a reflecting pool, paper lanterns, and deliberately nothing to do |
-| **NEON LINE** | The racing game. Three laps of a hover-craft circuit over the rooftops, with boost gates, lap timing, and a ghost of your best run |
-| **STEEL GARDEN** | The sword game. Holographic enemies telegraph a strike axis; you parry by presenting the blade across it. Waves, parry scoring, three lives |
+| **NEON LINE** | The racing game. Three laps of a street circuit through the city against five rivals, with boost gates, live position, lap timing and a ghost of your best run |
+| **STEEL GARDEN** | The sword game. Opponents walk at you with swords and it does not stop until you die. Swing to cut, put your blade in theirs to block |
 
 Designed but not yet built: **DRIFT** (the AR game). See the design doc.
 
@@ -59,6 +59,12 @@ npm run smoke         # headless verification + screenshots
 npm run pages-check    # boot the bundle from a Pages-style subpath
 ```
 
+## Unity port
+
+[`unity/`](unity/) holds the start of the native port: the colour script, the city generator and the facade shader translated to C# and HLSL, plus the setup that mobile URP gets wrong by default.
+
+It is a reviewed scaffold, **not a compiled project** — there is no Unity on the machine that wrote it, so none of it has been through the editor or a headset. `unity/README.md` is explicit about which parts are faithful translations of verified code and which have to be rebuilt from scratch.
+
 ## Docs
 
 - [`docs/GAME_DESIGN.md`](docs/GAME_DESIGN.md) — the full design: city, districts, all three games-in-game, social and comfort rules, scope
@@ -72,6 +78,7 @@ src/
   world/      palette, sky and IBL, materials, city, the Lantern, glow batching
   player/     locomotion, collision, comfort
   games/      NEON LINE, STEEL GARDEN
+unity/        Unity/URP port scaffold — palette, city generator, facade shader
   ui/         settings panel and overlay, in-VR wrist panel
 tools/        headless smoke test and visual probes
 ```

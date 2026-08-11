@@ -95,10 +95,15 @@ Found in Low Market: a narrow stair, a paper door, a dojo with a single attendan
 
 ### 4.2 Combat Design
 
-Physics-authentic but forgiving. The failure mode we must avoid is flailing being optimal.
+**Revised after playtest.** The first build was an abstract parry puzzle against floating holograms — you matched a blade angle to a telegraphed line. It was not a sword game. What people want from a sword in VR is to fight people with it, and to keep fighting until they lose.
 
-- **Weight simulation** — the blade has real inertia; wild swings overshoot and leave you open. Controlled arcs are mechanically superior.
-- **Directional defense** — enemies telegraph a colored slash line ~500ms before striking. Meet it with a matching blade angle to parry. Parry window is generous (250ms); the skill is reading, not reflexes.
+The shipped design:
+
+- **You fight humans.** Opponents walk at you carrying swords, wind up, and swing. No abstraction.
+- **You cut by swinging.** A cut requires real blade speed; resting your sword inside someone does nothing. This is what stops the mode being solvable by holding the blade still.
+- **You block by position.** When their blade comes down, put yours where it is going. Not an angle puzzle — the thing every player instinctively tries.
+- **It does not end.** Waves escalate on kills. You have five marks and you will run out. The score is how long you lasted.
+- **Weight, not drag.** The blade's rotation is softened just enough to feel like steel. An earlier version lagged it so heavily you could not aim a cut, which is its own kind of unplayable.
 - **No stamina bar.** Your *actual arms* are the stamina bar. Fights are designed to run 60–90 seconds so real fatigue is the pacing tool.
 - **One-hit lethality both ways** at higher tiers — this makes fights tense without making them long.
 - **Seated mode** is a first-class citizen: enemies approach in a 180° frontal arc, no flanking, no ducking required.
@@ -134,7 +139,15 @@ Cosmetic blades and a wall scroll for your apartment. Nothing that gates content
 
 A lit launch pad in the plaza, ringed in green, with a slow arc turning above it. Step on and the arc spins up. Pull the trigger and you are on the rail.
 
-### 5.2 The core decision: rail-relative, not free flight
+### 5.2 Revised after playtest: a car on a street circuit
+
+The first build was a hover-craft on a skyway at 223 km/h. Two things were wrong with that. At that speed down an eight-metre ribbon the world is a blur you cannot read, so it registers as chaos rather than as speed. And the skyway was generated independently of the city, so it drove **through tower blocks**.
+
+The shipped design is a street circuit: closed public roads through the neon city, the way a real street race is run. It tops out near 145 km/h with real acceleration, engine braking, and brakes considerably stronger than the engine. Routing it along the road grid also fixes the intersection problem by construction — the streets are the one part of the map guaranteed to be clear, because that is where the buildings are not.
+
+**You race five rivals.** They run their own pace on their own lines, with no rubber-banding that drags them back when you pull ahead. A rival quicker than you stays ahead, which is the only way finishing second means anything. Position is on the HUD, large, because in a race it is the only number that matters.
+
+### 5.3 The core decision: rail-relative, not free flight
 
 The craft is locked to a spline threaded around the city at rooftop height. The player controls **throttle** and **lateral position on the ribbon** — not pitch, not yaw, not altitude.
 
@@ -142,7 +155,7 @@ This is a comfort decision before it is a design one. Free 6DoF flight through a
 
 It is also better racing. Removing the axes nobody enjoys managing leaves the two that carry the whole skill expression: when to commit the throttle, and what line to take.
 
-### 5.3 Loop
+### 5.4 Loop
 
 - **Three laps** of a closed circuit, roughly 800 m per lap.
 - **Throttle** on the trigger. Releasing coasts down to a cruise rather than to a stop — a nervous player is never stranded.
@@ -151,14 +164,14 @@ It is also better racing. Removing the axes nobody enjoys managing leaves the tw
 - **Rail scrape** costs speed. There is no crash, no wreck, no respawn — losing time is punishment enough, and a crash state would drag a relaxing mode into a frustrating one.
 - **Ghost** of your own best run, replayed alongside you. Racing yourself, never a stranger.
 
-### 5.4 Comfort specifics
+### 5.5 Comfort specifics
 
 - Rigid cockpit shell parented to the head rig, so there is always a stable reference frame.
 - **Roll is capped at eight degrees.** Vestibular conflict scales with roll far faster than with yaw, so the bank is cosmetic only.
 - Speed is communicated by the emissive edge rails streaking past in peripheral vision, not by camera shake or FOV punch — both of which are comfort disasters.
 - Seated by default; the mode assumes it.
 
-### 5.5 What it is worth
+### 5.6 What it is worth
 
 The rail line is already the most-loved passive space in the city (§3.2). NEON LINE is the same geography at 200 km/h. A player who has spent an hour riding that loop with a book knows the route before they ever race it, and that recognition is the payoff.
 
