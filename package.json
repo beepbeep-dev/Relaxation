@@ -1,0 +1,36 @@
+{
+  "name": "relaxation",
+  "version": "0.1.0",
+  "description": "Kaisei — a VR chill-out city with games inside it",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "smoke": "node tools/smoke.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beepbeep-dev/Relaxation.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/beepbeep-dev/Relaxation/issues"
+  },
+  "homepage": "https://github.com/beepbeep-dev/Relaxation#readme",
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "playwright": "^1.62.1",
+    "vite": "^8.2.1"
+  },
+  "private": true,
+  "type": "module"
+}
