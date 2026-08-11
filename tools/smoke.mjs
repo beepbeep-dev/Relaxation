@@ -146,6 +146,53 @@ race.gatesHit > 0 ? ok(`${race.gatesHit} boost gates hit`) : fail('no boost gate
 race.rigY > 10 ? ok(`rig lifted onto the track at ${race.rigY.toFixed(1)}m`) : fail('rig not on track');
 race.offsetInBounds ? ok('craft stayed on the ribbon') : fail('craft left the track');
 
+// --- STEEL GARDEN: enemies spawn, telegraph, and resolve into a parry or a hit
+const sword = await page.evaluate(() => {
+  const k = window.__kaisei;
+  if (k.racing.active) k.racing.exit();
+  k.sword.enter();
+  const entered = k.sword.state;
+  k.sword.begin();
+
+  const ctx = { engine: k.engine, elapsed: 0, dt: 1 / 72 };
+  const step = () => { ctx.elapsed += 1 / 72; k.sword.update(1 / 72, ctx); };
+
+  // Run until enemies exist and at least one has reached the telegraph phase,
+  // so we are asserting the state machine rather than the wall clock.
+  let sawTelegraph = false;
+  let maxEnemies = 0;
+  for (let i = 0; i < 72 * 40; i++) {
+    step();
+    maxEnemies = Math.max(maxEnemies, k.sword.enemies.length);
+    if (k.sword.enemies.some((e) => e.state === 'telegraph')) sawTelegraph = true;
+    if (k.sword.state !== 'fighting') break;
+  }
+
+  return {
+    entered,
+    maxEnemies,
+    sawTelegraph,
+    finalState: k.sword.state,
+    // A player who never moves the blade must lose health — if damage never
+    // lands, the mode has no stakes and the parry check is not wired up.
+    health: k.sword.health,
+    score: k.sword.score,
+    bladeVisible: k.sword.bladeRoot.visible,
+    arenaY: k.sword.group.position.y,
+  };
+});
+console.log('\nsword:', sword, '\n');
+sword.entered === 'ready' ? ok('dojo opens on the ready screen') : fail(`entered as "${sword.entered}"`);
+sword.maxEnemies > 0 ? ok(`${sword.maxEnemies} enemies active at peak`) : fail('no enemies spawned');
+sword.sawTelegraph ? ok('enemies reach the telegraph phase') : fail('no enemy ever telegraphed');
+sword.bladeVisible ? ok('blade is drawn') : fail('blade not visible');
+sword.arenaY > 50 ? ok(`arena sits at ${sword.arenaY}m, clear of the city`) : fail('arena overlaps the city');
+sword.health < 3 || sword.finalState === 'defeated'
+  ? ok(`an idle blade takes damage (health ${sword.health}, ${sword.finalState})`)
+  : fail('an idle player never took damage — strikes are not resolving');
+
+await page.evaluate(() => { if (window.__kaisei.sword.active) window.__kaisei.sword.exit(); });
+
 // --- audio graph came up on the entry gesture
 const audio = await page.evaluate(() => {
   const a = window.__kaisei.audio;
@@ -226,6 +273,22 @@ await page.screenshot({ path: 'tools/shots/lounge.png' });
 await page.evaluate(() => { window.__kaisei.racing.enter(); window.__kaisei.racing._countdown = 0.01; });
 await page.waitForTimeout(1200);
 await page.screenshot({ path: 'tools/shots/race.png' });
+
+// STEEL GARDEN, mid-fight: enter, run the sim far enough for enemies to be
+// on approach, then look at it.
+await page.evaluate(async () => {
+  const k = window.__kaisei;
+  if (k.racing.active) k.racing.exit();
+  k.sword.enter();
+  k.sword.begin();
+  const ctx = { engine: k.engine, elapsed: 0, dt: 1 / 72 };
+  for (let i = 0; i < 200; i++) { ctx.elapsed += 1 / 72; k.sword.update(1 / 72, ctx); }
+  k.engine.rig.position.set(0, 120, 3.5);
+  k.player._yaw = 0; k.player._pitch = -0.06;
+  k.engine.camera.rotation.set(-0.06, 0, 0, 'YXZ');
+});
+await page.waitForTimeout(900);
+await page.screenshot({ path: 'tools/shots/sword.png' });
 console.log('ok    screenshots written to tools/shots/');
 
 if (errors.length) {

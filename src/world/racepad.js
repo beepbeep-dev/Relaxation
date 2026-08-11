@@ -3,17 +3,23 @@ import { library, neonMaterial } from './materials.js';
 import { PALETTE } from './palette.js';
 
 /**
- * The launch pad in the plaza — how NEON LINE is entered.
+ * A lit pad in the plaza that leads into one of the games.
  *
  * Diegetic entry, per the design pillars: no menu, no prompt panel. You walk
- * onto a lit pad and the ring above it spins up. Pulling the trigger while
- * standing on it launches you.
+ * onto a pad and the ring above it spins up. Pulling the trigger while
+ * standing on it takes you in.
+ *
+ * Both games use the same object with a different label and accent colour, so
+ * the entry ritual is identical everywhere and there is exactly one place to
+ * change how it feels.
  */
 export class RacePad {
-  constructor(scene, glow, position = new THREE.Vector3(0, 0, 16)) {
+  constructor(scene, glow, position = new THREE.Vector3(0, 0, 16), opts = {}) {
     this.glow = glow;
     this.position = position.clone();
-    this.radius = 3.2;
+    this.radius = opts.radius ?? 3.2;
+    this.accent = opts.accent ?? PALETTE.accentGreen;
+    this.secondary = opts.secondary ?? PALETTE.accentBlue;
     this.armed = false;
 
     const mats = library();
@@ -28,7 +34,7 @@ export class RacePad {
     disc.position.y = 0.09;
     this.group.add(disc);
 
-    this.ringMat = neonMaterial(PALETTE.accentGreen, 2.4);
+    this.ringMat = neonMaterial(this.accent, 2.4);
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(this.radius - 0.25, 0.09, 6, 40),
       this.ringMat
@@ -40,18 +46,18 @@ export class RacePad {
     // Floating arc that spins up when the player steps on.
     this.arc = new THREE.Mesh(
       new THREE.TorusGeometry(1.9, 0.07, 6, 32, Math.PI * 1.35),
-      neonMaterial(PALETTE.accentBlue, 3.0)
+      neonMaterial(this.secondary, 3.0)
     );
     this.arc.position.y = 2.6;
     this.arc.rotation.x = Math.PI / 2;
     this.group.add(this.arc);
 
     this.halo = glow.add(
-      this.position.clone().setY(1.2), PALETTE.accentGreen, 7, 0.22
+      this.position.clone().setY(1.2), this.accent, 7, 0.22
     );
     this._haloOpacity = 0.22;
 
-    this.label = this._makeLabel('NEON LINE');
+    this.label = this._makeLabel(opts.label ?? 'NEON LINE');
     this.label.position.set(0, 3.6, 0);
     this.group.add(this.label);
   }
@@ -60,7 +66,7 @@ export class RacePad {
     const c = document.createElement('canvas');
     c.width = 512; c.height = 128;
     const ctx = c.getContext('2d');
-    ctx.fillStyle = PALETTE.accentGreen;
+    ctx.fillStyle = this.accent;
     ctx.font = '600 64px ui-sans-serif, system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

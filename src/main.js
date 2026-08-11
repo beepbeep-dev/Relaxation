@@ -12,6 +12,8 @@ import { Lounge } from './world/lounge.js';
 import { RacePad } from './world/racepad.js';
 import { Player } from './player/player.js';
 import { Racing } from './games/racing.js';
+import { Sword } from './games/sword.js';
+import { PALETTE } from './world/palette.js';
 import { SettingsPanel, SettingsOverlay } from './ui/panel.js';
 import { WristPanel } from './ui/wrist.js';
 
@@ -61,7 +63,14 @@ async function main() {
   };
 
   const player = new Player(engine, world);
-  const racePad = new RacePad(engine.scene, glow, new THREE.Vector3(0, 0, 18));
+
+  // Two entrances, flanking the plaza. Same ritual, different accent.
+  const racePad = new RacePad(engine.scene, glow, new THREE.Vector3(-7, 0, 18), {
+    label: 'NEON LINE', accent: PALETTE.accentGreen, secondary: PALETTE.accentBlue,
+  });
+  const dojoPad = new RacePad(engine.scene, glow, new THREE.Vector3(9, 0, 18), {
+    label: 'STEEL GARDEN', accent: PALETTE.accentPurple, secondary: PALETTE.accentGreen,
+  });
   progress(84);
   await frame();
 
@@ -70,20 +79,29 @@ async function main() {
 
   const savedRig = { position: new THREE.Vector3(), quaternion: new THREE.Quaternion() };
 
-  const racing = new Racing(engine, glow, {
-    audio,
-    onExit: () => {
-      // Restore the walking rig exactly where it was left.
-      engine.rig.position.copy(savedRig.position);
-      engine.rig.quaternion.copy(savedRig.quaternion);
-      racePad.group.visible = true;
-    },
-  });
+  // Both games take over the rig, so they share one save/restore of where the
+  // player was standing when they stepped in.
+  const restoreWalking = () => {
+    engine.rig.position.copy(savedRig.position);
+    engine.rig.quaternion.copy(savedRig.quaternion);
+    racePad.group.visible = true;
+    dojoPad.group.visible = true;
+    city.group.visible = true;
+  };
+
+  const racing = new Racing(engine, glow, { audio, onExit: restoreWalking });
+
+  // The arena floats well above the city, so the dojo's holographic framing
+  // has somewhere to be that is not a room we would have to build.
+  const sword = new Sword(engine, glow, { audio, onExit: restoreWalking });
+  sword.group.position.set(0, 120, 0);
 
   // Glows are registered during construction and committed once, after every
   // system that contributes to them has been built.
   glow.build(engine.scene);
   racing.bindKeys(player._keys);
+  sword.bindKeys(player._keys);
+  sword.bindControllers(player._controllers);
 
   // --- settings plumbing
   const liveCtx = {
@@ -112,23 +130,38 @@ async function main() {
       stats.update(dt);
       sky.update(dt, ctx);
       wrist.update(dt, ctx);
-      if (racing.active) return;
+      if (racing.active || sword.active) return;
       player.update(dt, ctx);
       racePad.update(dt, ctx);
+      dojoPad.update(dt, ctx);
       lounge.update(dt, ctx);
       city.update(dt, ctx);
     },
   });
   engine.add(racing);
+  engine.add(sword);
 
   // --- interaction. The wrist panel gets first refusal on every trigger press,
   // so aiming at it never also sits you down or launches a race.
-  const tryLaunch = () => {
-    if (racing.active || !racePad.armed) return;
+  const stash = () => {
     savedRig.position.copy(engine.rig.position);
     savedRig.quaternion.copy(engine.rig.quaternion);
     racePad.group.visible = false;
-    racing.enter();
+    dojoPad.group.visible = false;
+  };
+
+  const tryLaunch = () => {
+    if (racing.active || sword.active) return;
+    if (racePad.armed) {
+      stash();
+      racing.enter();
+    } else if (dojoPad.armed) {
+      stash();
+      // Drop the rig into the arena; the city stays drawn far below.
+      engine.rig.position.set(0, 120, 3.5);
+      engine.rig.quaternion.identity();
+      sword.enter();
+    }
   };
 
   for (const ctrl of player._controllers) {
@@ -207,12 +240,13 @@ async function main() {
 
   engine.renderer.xr.addEventListener('sessionend', () => {
     if (racing.active) racing.exit();
+    if (sword.active) sword.exit();
     applyNow();
   });
 
   // Expose for the smoke test and for poking at from the console.
   window.__kaisei = {
-    engine, city, lounge, player, racing, racePad, glow, audio, sky, sun,
+    engine, city, lounge, player, racing, sword, racePad, dojoPad, glow, audio, sky, sun,
     settings, stats, panel, overlay, wrist, applyNow,
     quality: QUALITY,
   };

@@ -62,11 +62,19 @@ const FRAG = /* glsl */ `
  * registered, then animate through the returned handles.
  */
 export class GlowField {
-  constructor(texture, intensity = 1) {
+  constructor(texture, intensity = 1, reserve = 96) {
     this.texture = texture;
     this._entries = [];
     this.mesh = null;
     this._intensity = intensity;
+
+    // Spare slots for glows created *after* build — enemy halos, anything
+    // spawned during play. Without a pool, a late add() hands back an index
+    // past the end of the instance buffers and the first write walks off the
+    // array, which is exactly what a runtime spawn did.
+    this._reserve = reserve;
+    this._free = [];
+    this._capacity = 0;
   }
 
   /** Global multiplier, driven live from the graphics settings. */
@@ -75,21 +83,49 @@ export class GlowField {
     if (this.mesh) this.mesh.material.uniforms.uIntensity.value = v;
   }
 
-  /** Reserve a glow. Returns a handle for animating it after build(). */
+  /**
+   * Reserve a glow. Before build() this appends to the static set; after
+   * build() it claims a pooled slot, so systems that spawn during play use the
+   * identical call and still cost no extra draw call.
+   */
   add(position, color, size, opacity = 1) {
-    const index = this._entries.length;
-    this._entries.push({
-      pos: position.clone ? position.clone() : new THREE.Vector3(...position),
-      color: new THREE.Color(color).convertSRGBToLinear(),
-      size,
-      opacity,
-    });
+    const pos = position.clone ? position.clone() : new THREE.Vector3(...position);
+    const col = new THREE.Color(color).convertSRGBToLinear();
+
+    if (!this.mesh) {
+      const index = this._entries.length;
+      this._entries.push({ pos, color: col, size, opacity });
+      return new GlowHandle(this, index);
+    }
+
+    const index = this._free.pop();
+    if (index === undefined) {
+      // Pool exhausted. Hand back an inert handle rather than corrupting the
+      // buffers — a missing halo is a cosmetic loss, a stray write is a crash.
+      return new GlowHandle(this, -1);
+    }
+    this.aOffset.setXYZ(index, pos.x, pos.y, pos.z);
+    this.aColor.setXYZ(index, col.r, col.g, col.b);
+    this.aOffset.needsUpdate = true;
+    this.aColor.needsUpdate = true;
+    this.setSize(index, size);
+    this.setOpacity(index, opacity);
     return new GlowHandle(this, index);
   }
 
+  /** Return a pooled slot so it can be reused. Static slots are never freed. */
+  release(handle) {
+    if (!handle || handle.index < this._staticCount || handle.index < 0) return;
+    this.setOpacity(handle.index, 0);
+    this._free.push(handle.index);
+  }
+
   build(scene) {
-    const n = this._entries.length;
+    this._staticCount = this._entries.length;
+    const n = this._entries.length + this._reserve;
     if (n === 0) return null;
+    this._capacity = n;
+    for (let i = this._staticCount; i < n; i++) this._free.push(i);
 
     const quad = new THREE.PlaneGeometry(1, 1);
     const geo = new THREE.InstancedBufferGeometry();
@@ -109,6 +145,8 @@ export class GlowField {
       size[i] = e.size;
       opacity[i] = e.opacity;
     });
+    // Pooled slots start invisible.
+    for (let i = this._staticCount; i < n; i++) { size[i] = 1; opacity[i] = 0; }
 
     this.aOffset = new THREE.InstancedBufferAttribute(offset, 3);
     this.aColor = new THREE.InstancedBufferAttribute(color, 3);
@@ -141,19 +179,19 @@ export class GlowField {
   }
 
   setOpacity(i, v) {
-    if (!this.aOpacity) return;
+    if (!this.aOpacity || i < 0 || i >= this._capacity) return;
     this.aOpacity.array[i] = v;
     this.aOpacity.needsUpdate = true;
   }
 
   setSize(i, v) {
-    if (!this.aSize) return;
+    if (!this.aSize || i < 0 || i >= this._capacity) return;
     this.aSize.array[i] = v;
     this.aSize.needsUpdate = true;
   }
 
   setPosition(i, x, y, z) {
-    if (!this.aOffset) return;
+    if (!this.aOffset || i < 0 || i >= this._capacity) return;
     this.aOffset.array.set([x, y, z], i * 3);
     this.aOffset.needsUpdate = true;
   }
