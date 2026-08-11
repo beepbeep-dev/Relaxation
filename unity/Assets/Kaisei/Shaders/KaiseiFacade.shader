@@ -22,6 +22,13 @@ Shader "Kaisei/Facade"
         _FloorH     ("Storey height (m)", Float) = 3.6
         _BayW       ("Window bay (m)", Float) = 2.6
         _EmissiveMul("Window brightness", Range(0, 3)) = 0.55
+        // Declared here too, not just inside the instancing buffer below, so
+        // there is a real default when GPU instancing is off (mobile Vulkan
+        // with a single building, the editor's material preview, SRP Batcher
+        // compatibility checks). Without a Properties entry of the same name,
+        // UNITY_ACCESS_INSTANCED_PROP has nothing to fall back to and every
+        // facade goes black instead of tinted.
+        _WindowTint ("Window tint (fallback)", Color) = (1, 1, 1, 1)
     }
 
     SubShader
@@ -42,10 +49,17 @@ Shader "Kaisei/Facade"
             // Instancing is not optional here: the whole city is one mesh
             // drawn many times, and the per-instance colour carries each
             // building's window tint.
+            // Single-pass instanced stereo rendering is the whole reason two
+            // eyes cost roughly one draw call on Quest, but it only happens if
+            // every stage actually carries the eye index through — see the
+            // UNITY_..._STEREO macros below. Missing them does not error, it
+            // just quietly renders both eyes from the same one, which reads
+            // as a broken headset, not a broken shader.
             #pragma multi_compile_instancing
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile _ _ADDITIONAL_LIGHTS
+            #pragma multi_compile _ _SHADOWS_SOFT
             #pragma multi_compile_fog
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
@@ -68,6 +82,7 @@ Shader "Kaisei/Facade"
                 float  seed        : TEXCOORD4;
                 float  fogCoord    : TEXCOORD5;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
+                UNITY_VERTEX_OUTPUT_STEREO
             };
 
             CBUFFER_START(UnityPerMaterial)
@@ -93,6 +108,7 @@ Shader "Kaisei/Facade"
                 Varyings OUT = (Varyings)0;
                 UNITY_SETUP_INSTANCE_ID(IN);
                 UNITY_TRANSFER_INSTANCE_ID(IN, OUT);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(OUT);
 
                 // Recover the instance's world size from the object-to-world
                 // matrix columns. The mesh is a unit cube, so position * scale
@@ -121,6 +137,7 @@ Shader "Kaisei/Facade"
             half4 frag(Varyings IN) : SV_Target
             {
                 UNITY_SETUP_INSTANCE_ID(IN);
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(IN);
 
                 float3 an = abs(IN.normalOS);
                 bool isWall = an.y < 0.5;
@@ -202,6 +219,11 @@ Shader "Kaisei/Facade"
                 inputData.shadowCoord = TransformWorldToShadowCoord(IN.positionWS);
                 inputData.fogCoord = IN.fogCoord;
                 inputData.bakedGI = SampleSH(inputData.normalWS);
+                // Left zeroed, screen-space occlusion samples every facade
+                // fragment at clip-space origin — invisible until SSAO or a
+                // decal is added, and a one-line trap for whoever adds one.
+                inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(IN.positionCS);
+                inputData.shadowMask = half4(1, 1, 1, 1);
 
                 SurfaceData surface = (SurfaceData)0;
                 surface.albedo = albedo;
@@ -218,10 +240,119 @@ Shader "Kaisei/Facade"
             ENDHLSL
         }
 
-        // Shadow casting reuses URP's stock pass; the facade is opaque, so
-        // there is nothing procedural to account for in the depth-only pass.
-        UsePass "Universal Render Pipeline/Lit/ShadowCaster"
-        UsePass "Universal Render Pipeline/Lit/DepthOnly"
+        // Shadow casting and depth previously came from
+        // `UsePass "Universal Render Pipeline/Lit/ShadowCaster"` (and
+        // DepthOnly). UsePass name-matches into the *compiled* Lit shader, so
+        // it also pulls in Lit's own Attributes/Varyings layout and its
+        // _ALPHATEST_ON / _BaseMap property expectations — none of which this
+        // shader declares. It happened to work in the versions of URP this
+        // was checked against, but a Lit shader rewrite upstream (pass
+        // renamed, alpha-clip property required unconditionally) breaks these
+        // two passes silently: no compile error, just missing shadows or a
+        // broken depth prepass discovered at runtime. Since the facade has no
+        // alpha clip and no extra vertex streams, writing the two passes
+        // directly against our own Attributes is a few lines and stops
+        // depending on Lit's internals at all.
+        Pass
+        {
+            Name "ShadowCaster"
+            Tags { "LightMode" = "ShadowCaster" }
+
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex ShadowVert
+            #pragma fragment ShadowFrag
+            #pragma target 3.0
+            #pragma multi_compile_instancing
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            float3 _LightDirection;
+
+            struct ShadowAttributes
+            {
+                float4 positionOS : POSITION;
+                float3 normalOS   : NORMAL;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct ShadowVaryings
+            {
+                float4 positionCS : SV_POSITION;
+            };
+
+            ShadowVaryings ShadowVert(ShadowAttributes IN)
+            {
+                ShadowVaryings OUT = (ShadowVaryings)0;
+                UNITY_SETUP_INSTANCE_ID(IN);
+
+                float3 positionWS = TransformObjectToWorld(IN.positionOS.xyz);
+                float3 normalWS = TransformObjectToWorldNormal(IN.normalOS);
+                float4 positionCS = TransformWorldToHClip(
+                    ApplyShadowBias(positionWS, normalWS, _LightDirection));
+
+                // Clamp into the light's near plane instead of clipping, same
+                // as the stock pass — otherwise shadow casters right at a
+                // light's edge pop in and out as they cross it.
+#if UNITY_REVERSED_Z
+                positionCS.z = min(positionCS.z, positionCS.w * UNITY_NEAR_CLIP_VALUE);
+#else
+                positionCS.z = max(positionCS.z, positionCS.w * UNITY_NEAR_CLIP_VALUE);
+#endif
+                OUT.positionCS = positionCS;
+                return OUT;
+            }
+
+            half4 ShadowFrag(ShadowVaryings IN) : SV_Target { return 0; }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode" = "DepthOnly" }
+
+            ZWrite On
+            ColorMask 0
+            Cull Back
+
+            HLSLPROGRAM
+            #pragma vertex DepthOnlyVert
+            #pragma fragment DepthOnlyFrag
+            #pragma target 3.0
+            #pragma multi_compile_instancing
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            struct DepthAttributes
+            {
+                float4 positionOS : POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct DepthVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                UNITY_VERTEX_OUTPUT_STEREO
+            };
+
+            DepthVaryings DepthOnlyVert(DepthAttributes IN)
+            {
+                DepthVaryings OUT = (DepthVaryings)0;
+                UNITY_SETUP_INSTANCE_ID(IN);
+                UNITY_TRANSFER_INSTANCE_ID(IN, OUT);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(OUT);
+                OUT.positionCS = TransformObjectToHClip(IN.positionOS.xyz);
+                return OUT;
+            }
+
+            half4 DepthOnlyFrag(DepthVaryings IN) : SV_Target { return 0; }
+            ENDHLSL
+        }
     }
     FallBack "Universal Render Pipeline/Lit"
 }

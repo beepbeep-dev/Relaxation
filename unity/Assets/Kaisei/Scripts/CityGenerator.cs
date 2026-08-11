@@ -43,6 +43,10 @@ namespace Kaisei
         // DrawMeshInstanced caps at 1023 per call; batches are split to match.
         const int BatchLimit = 1023;
 
+        // Resolved once. Looking a property up by string every frame hashes the
+        // string every frame.
+        static readonly int WindowTintId = Shader.PropertyToID("_WindowTint");
+
         struct Tower
         {
             public Vector3 pos;
@@ -50,10 +54,24 @@ namespace Kaisei
             public Color tint;
         }
 
-        readonly List<Matrix4x4> _towerParts = new();
-        readonly List<Vector4> _towerTints = new();
-        readonly List<Matrix4x4> _parapets = new();
-        readonly List<Bounds> _colliders = new();
+        readonly List<Matrix4x4> _towerParts = new List<Matrix4x4>();
+        readonly List<Vector4> _towerTints = new List<Vector4>();
+        readonly List<Matrix4x4> _parapets = new List<Matrix4x4>();
+        readonly List<Bounds> _colliders = new List<Bounds>();
+
+        // Batches are sliced once at generation time and reused every frame.
+        // The first version called List.GetRange().ToArray() twice per batch
+        // inside Update, which allocates on every single frame — the exact
+        // thing the JavaScript build was rewritten to stop doing, because GC
+        // pauses on a mobile chip read as hitches in a headset.
+        struct Batch
+        {
+            public Matrix4x4[] matrices;
+            public Vector4[] tints;
+            public int count;
+        }
+        readonly List<Batch> _towerBatches = new List<Batch>();
+        readonly List<Batch> _parapetBatches = new List<Batch>();
 
         Mesh _cube;
         System.Random _rng;
@@ -107,26 +125,45 @@ namespace Kaisei
             }
 
             foreach (var t in towers) Decompose(t);
+
+            Slice(_towerParts, _towerTints, _towerBatches);
+            Slice(_parapets, null, _parapetBatches);
+        }
+
+        static void Slice(List<Matrix4x4> matrices, List<Vector4> tints, List<Batch> into)
+        {
+            for (int start = 0; start < matrices.Count; start += BatchLimit)
+            {
+                int count = Mathf.Min(BatchLimit, matrices.Count - start);
+                into.Add(new Batch
+                {
+                    matrices = matrices.GetRange(start, count).ToArray(),
+                    tints = tints?.GetRange(start, count).ToArray(),
+                    count = count,
+                });
+            }
+        }
+
+        void AddPart(Vector3 centre, Vector3 size, Color tint)
+        {
+            _towerParts.Add(Matrix4x4.TRS(centre, Quaternion.identity, size));
+            _towerTints.Add(tint);
+        }
+
+        /// <summary>A thin slab overhanging a tier top — the roof's edge.</summary>
+        void AddCap(Vector3 at, float w, float d)
+        {
+            _parapets.Add(Matrix4x4.TRS(
+                at + Vector3.up * 0.22f, Quaternion.identity, new Vector3(w, 0.44f, d)));
         }
 
         /// <summary>Split one building into podium, shaft tiers and crown.</summary>
         void Decompose(Tower t)
         {
-            void Add(Vector3 centre, Vector3 size, Color tint)
-            {
-                _towerParts.Add(Matrix4x4.TRS(centre, Quaternion.identity, size));
-                _towerTints.Add(tint);
-            }
-            void Cap(Vector3 at, float w, float d)
-            {
-                _parapets.Add(Matrix4x4.TRS(
-                    at + Vector3.up * 0.22f, Quaternion.identity, new Vector3(w, 0.44f, d)));
-            }
-
             float podiumH = Mathf.Min(7.2f, t.h * 0.28f);
-            Add(t.pos + Vector3.up * podiumH * 0.5f,
+            AddPart(t.pos + Vector3.up * podiumH * 0.5f,
                 new Vector3(t.w * 1.14f, podiumH, t.d * 1.14f), t.tint);
-            Cap(t.pos + Vector3.up * podiumH, t.w * 1.2f, t.d * 1.2f);
+            AddCap(t.pos + Vector3.up * podiumH, t.w * 1.2f, t.d * 1.2f);
 
             int tiers = 1 + _rng.Next(3);
             float baseY = podiumH, remaining = t.h - podiumH, sw = t.w, sd = t.d;
@@ -135,13 +172,13 @@ namespace Kaisei
             {
                 bool last = i == tiers - 1;
                 float tierH = last ? remaining : remaining * Range(0.4f, 0.7f);
-                Add(t.pos + Vector3.up * (baseY + tierH * 0.5f),
+                AddPart(t.pos + Vector3.up * (baseY + tierH * 0.5f),
                     new Vector3(sw, tierH, sd), t.tint);
                 baseY += tierH;
                 remaining -= tierH;
                 if (!last)
                 {
-                    Cap(t.pos + Vector3.up * baseY, sw * 1.06f, sd * 1.06f);
+                    AddCap(t.pos + Vector3.up * baseY, sw * 1.06f, sd * 1.06f);
                     float step = Range(0.72f, 0.9f);
                     sw *= step; sd *= step;
                 }
@@ -150,11 +187,11 @@ namespace Kaisei
             if (t.h > 34f)
             {
                 float crownH = Range(2.5f, 6f);
-                Add(t.pos + Vector3.up * (baseY + crownH * 0.5f),
+                AddPart(t.pos + Vector3.up * (baseY + crownH * 0.5f),
                     new Vector3(sw * 0.62f, crownH, sd * 0.62f), t.tint);
                 baseY += crownH;
             }
-            Cap(t.pos + Vector3.up * baseY, sw * 1.08f, sd * 1.08f);
+            AddCap(t.pos + Vector3.up * baseY, sw * 1.08f, sd * 1.08f);
 
             // Collision uses the podium, the widest part at walking height.
             _colliders.Add(new Bounds(
@@ -164,44 +201,70 @@ namespace Kaisei
 
         void Update()
         {
-            DrawBatched(_towerParts, _towerTints, facadeMaterial);
-            DrawBatched(_parapets, null, parapetMaterial);
+            DrawBatches(_towerBatches, facadeMaterial);
+            DrawBatches(_parapetBatches, parapetMaterial);
         }
 
-        void DrawBatched(List<Matrix4x4> matrices, List<Vector4> tints, Material material)
+        void DrawBatches(List<Batch> batches, Material material)
         {
-            if (material == null || matrices.Count == 0) return;
+            if (material == null) return;
 
-            for (int start = 0; start < matrices.Count; start += BatchLimit)
+            foreach (var b in batches)
             {
-                int count = Mathf.Min(BatchLimit, matrices.Count - start);
-                var slice = matrices.GetRange(start, count).ToArray();
-
                 _mpb.Clear();
-                if (tints != null)
-                {
-                    _mpb.SetVectorArray("_WindowTint", tints.GetRange(start, count).ToArray());
-                }
-                Graphics.DrawMeshInstanced(_cube, 0, material, slice, count, _mpb,
+                if (b.tints != null) _mpb.SetVectorArray(WindowTintId, b.tints);
+
+                Graphics.DrawMeshInstanced(
+                    _cube, 0, material, b.matrices, b.count, _mpb,
                     UnityEngine.Rendering.ShadowCastingMode.On, true);
             }
         }
 
         public IReadOnlyList<Bounds> Colliders => _colliders;
 
-        /// <summary>A unit cube. Built in code so the port has no asset dependencies.</summary>
+        /// <summary>
+        /// A unit cube with split vertices, so each face carries its own normal.
+        ///
+        /// Built by hand rather than via GameObject.CreatePrimitive: that call
+        /// spawns a real GameObject complete with a BoxCollider purely to read
+        /// its mesh back, and then has to destroy it — wasteful, and it leaves a
+        /// collider in the scene for a frame if the destroy is ever missed.
+        ///
+        /// Split vertices matter for the facade shader, which switches on the
+        /// object-space normal to decide whether a fragment is a wall or a roof.
+        /// A shared-vertex cube interpolates normals across the corners and the
+        /// wall/roof test flickers along every edge.
+        /// </summary>
         static Mesh BuildCube()
         {
+            var verts = new List<Vector3>();
+            var norms = new List<Vector3>();
+            var tris = new List<int>();
+
+            const float h = 0.5f;
+            Face(verts, norms, tris, Vector3.forward, new Vector3(-h, -h, h), new Vector3(h, -h, h), new Vector3(h, h, h), new Vector3(-h, h, h));
+            Face(verts, norms, tris, Vector3.back, new Vector3(h, -h, -h), new Vector3(-h, -h, -h), new Vector3(-h, h, -h), new Vector3(h, h, -h));
+            Face(verts, norms, tris, Vector3.right, new Vector3(h, -h, h), new Vector3(h, -h, -h), new Vector3(h, h, -h), new Vector3(h, h, h));
+            Face(verts, norms, tris, Vector3.left, new Vector3(-h, -h, -h), new Vector3(-h, -h, h), new Vector3(-h, h, h), new Vector3(-h, h, -h));
+            Face(verts, norms, tris, Vector3.up, new Vector3(-h, h, h), new Vector3(h, h, h), new Vector3(h, h, -h), new Vector3(-h, h, -h));
+            Face(verts, norms, tris, Vector3.down, new Vector3(-h, -h, -h), new Vector3(h, -h, -h), new Vector3(h, -h, h), new Vector3(-h, -h, h));
+
             var m = new Mesh { name = "Kaisei/UnitCube" };
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            var src = go.GetComponent<MeshFilter>().sharedMesh;
-            m.vertices = src.vertices;
-            m.normals = src.normals;
-            m.uv = src.uv;
-            m.triangles = src.triangles;
+            m.SetVertices(verts);
+            m.SetNormals(norms);
+            m.SetTriangles(tris, 0);
             m.RecalculateBounds();
-            if (Application.isPlaying) Destroy(go); else DestroyImmediate(go);
             return m;
+        }
+
+        static void Face(List<Vector3> verts, List<Vector3> norms, List<int> tris,
+                         Vector3 normal, Vector3 a, Vector3 b, Vector3 c, Vector3 d)
+        {
+            int i = verts.Count;
+            verts.Add(a); verts.Add(b); verts.Add(c); verts.Add(d);
+            for (int k = 0; k < 4; k++) norms.Add(normal);
+            tris.Add(i); tris.Add(i + 1); tris.Add(i + 2);
+            tris.Add(i); tris.Add(i + 2); tris.Add(i + 3);
         }
     }
 }

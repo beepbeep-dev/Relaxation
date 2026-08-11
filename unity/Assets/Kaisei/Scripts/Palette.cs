@@ -18,9 +18,18 @@ namespace Kaisei
     ///          gates, the lit edge of a walkable ramp. It is the rarest of the
     ///          three, which is precisely why it is the colour the eye follows.
     ///
-    /// Colours are authored in sRGB and converted to linear on access, matching
-    /// the WebGL build. Unity's colour space must be set to Linear for this to
-    /// behave — Gamma will wash the whole script out.
+    /// Colours are authored as sRGB hex, matching the WebGL build's literals,
+    /// but `Hex()` below does *not* convert them to linear — Unity's `Color`
+    /// stores whatever component values it is given, and `ColorUtility`
+    /// performs no colour-space conversion either. With the project's colour
+    /// space set to Linear (required — Gamma will wash the whole script out
+    /// for other reasons), these values are read by the GPU as if they were
+    /// already linear, which is not what an sRGB hex string means. Consumers
+    /// must call `.linear` on the way in (`Palette.KeyLight.linear` set as a
+    /// light's `color`, etc.) or bake the same conversion into the shader.
+    /// Getting this wrong reads as "the palette is right but everything looks
+    /// washed out or oversaturated" rather than as an error, so it is worth
+    /// checking explicitly the first time this script is wired into a scene.
     /// </summary>
     public static class Palette
     {
