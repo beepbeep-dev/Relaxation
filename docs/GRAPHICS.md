@@ -72,7 +72,7 @@ Instead, "bloom" is **emissive materials plus one batched field of additive bill
 On a tile-based mobile GPU, **draw call count matters far more than triangle count**. The scene currently renders in:
 
 ```
-50 draw calls, ~17,600 triangles
+51 draw calls, ~24,000 triangles
 ```
 
 That number is asserted by the smoke test, which fails the build above 120.
@@ -91,6 +91,20 @@ Billboarding in the vertex shader rather than on the CPU matters in VR specifica
 Fixes:
 - Towers patch the shader via `onBeforeCompile` to move `vColor` off diffuse and onto `totalEmissiveRadiance`, so the tint lands on the lit windows where it was always meant to.
 - Gate rings use an unlit `MeshBasicMaterial`, where the instance colour *is* the output, with values above 1.0 so the tone mapper turns the overshoot into a hot core.
+
+### Facades are computed, not textured
+Buildings were the weakest thing in the scene for a long time, and the reason was structural rather than a matter of tuning: they were scaled boxes wearing one 512px emissive window texture. Stretching a single texture across buildings from 9m to 60m wide gives every building a *different storey height*, and a skyline where storey height varies per building is the most obvious tell that a city is not real.
+
+The facade is now evaluated in the fragment shader from **world-space metres**: a storey is 3.6m and a window bay 2.6m everywhere, and the vertical axis keys off world Y so floor lines run continuously across the separate boxes that make up one tiered tower. Glass and spandrel get genuinely different material response — glass is smooth and metallic and picks up the environment map, concrete stays rough — which no single map can express, since a map drives one channel. Window recess is a directional edge term, lit at the head and shadowed at the sill, rather than a normal map.
+
+It also costs zero texture memory and stays crisp at any distance, where the atlas turned to mush from across the plaza.
+
+**Massing** matters as much as surface. Each building is a wider street-level podium, one to three shaft tiers stepping back as they rise, a crown on the tall ones, and a parapet slab capping every tier. Setbacks are what make a skyline read as architecture rather than as a bar chart, and since every box lives in the same InstancedMesh they cost no draw calls.
+
+### Light pools on the wet road
+The road reflects the baked environment map, which is the *sky* — so a city full of neon had a street reflecting none of it. Proper planar reflections or SSR are both unaffordable here, so each light source also registers a flat additive quad lying on the road in its own colour. One instanced draw call for the whole city.
+
+Two things went wrong building it, both worth recording. The pools were first placed just above the road, which buried every one of them under the 12cm pavement slabs. And mapping the quad's `(x, y, 0)` into `(x, 0, y)` is a **reflection, not a rotation** — it reverses triangle winding, so every pool was back-facing seen from above and silently culled. Ground decals want `DoubleSide`.
 
 ### Textures are generated, not shipped
 Every texture — concrete and asphalt roughness and normal maps, two window facade variants, the puddle mask, the glow falloff — is drawn on a 2D canvas at boot. No downloads, no atlas budget, and every surface is a tunable parameter rather than an asset needing re-export.

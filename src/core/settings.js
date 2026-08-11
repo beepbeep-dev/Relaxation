@@ -210,7 +210,7 @@ export class Settings {
  * paths.
  */
 export function applyLive(settings, ctx) {
-  const { renderer, scene, engine, city, player, glow } = ctx;
+  const { renderer, scene, engine, city, player, glow, pools } = ctx;
   const v = settings.values;
 
   renderer.toneMappingExposure = v.exposure;
@@ -239,6 +239,7 @@ export function applyLive(settings, ctx) {
   }
 
   glow?.setIntensity(v.glowIntensity);
+  pools?.setIntensity(v.glowIntensity);
   city?.setRain(v.rain);
   ctx.audio?.setRain(v.rain);
 

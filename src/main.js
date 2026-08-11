@@ -6,6 +6,7 @@ import { Settings, applyLive } from './core/settings.js';
 import { QUALITY, resolveQuality } from './core/quality.js';
 import { createSky, createLighting } from './world/sky.js';
 import { GlowField } from './world/glowfield.js';
+import { LightPools } from './world/lightpools.js';
 import { library } from './world/materials.js';
 import { City } from './world/city.js';
 import { Lounge } from './world/lounge.js';
@@ -45,8 +46,11 @@ async function main() {
 
   // Every additive glow in the world funnels into one batched draw call.
   const glow = new GlowField(library().glow, QUALITY.glowIntensity);
+  // Flat pools of light on the wet road, in their own batch because they are
+  // ground-oriented rather than camera-facing.
+  const pools = new LightPools(library().glow, QUALITY.glowIntensity);
 
-  const city = new City(engine.scene, glow);
+  const city = new City(engine.scene, glow, pools);
   progress(52);
   await frame();
 
@@ -66,10 +70,10 @@ async function main() {
 
   // Two entrances, flanking the plaza. Same ritual, different accent.
   const racePad = new RacePad(engine.scene, glow, new THREE.Vector3(-7, 0, 18), {
-    label: 'NEON LINE', accent: PALETTE.accentGreen, secondary: PALETTE.accentBlue,
+    label: 'NEON LINE', accent: PALETTE.accentGreen, secondary: PALETTE.accentBlue, pools,
   });
   const dojoPad = new RacePad(engine.scene, glow, new THREE.Vector3(9, 0, 18), {
-    label: 'STEEL GARDEN', accent: PALETTE.accentPurple, secondary: PALETTE.accentGreen,
+    label: 'STEEL GARDEN', accent: PALETTE.accentPurple, secondary: PALETTE.accentGreen, pools,
   });
   progress(84);
   await frame();
@@ -99,6 +103,7 @@ async function main() {
   // Glows are registered during construction and committed once, after every
   // system that contributes to them has been built.
   glow.build(engine.scene);
+  pools.build(engine.scene);
   racing.bindKeys(player._keys);
   sword.bindKeys(player._keys);
   sword.bindControllers(player._controllers);
@@ -106,7 +111,7 @@ async function main() {
   // --- settings plumbing
   const liveCtx = {
     renderer: engine.renderer, scene: engine.scene, engine,
-    city, player, glow, audio, sun,
+    city, player, glow, pools, audio, sun,
   };
   const applyNow = () => applyLive(settings, liveCtx);
 
@@ -246,7 +251,7 @@ async function main() {
 
   // Expose for the smoke test and for poking at from the console.
   window.__kaisei = {
-    engine, city, lounge, player, racing, sword, racePad, dojoPad, glow, audio, sky, sun,
+    engine, city, lounge, player, racing, sword, racePad, dojoPad, glow, pools, audio, sky, sun,
     settings, stats, panel, overlay, wrist, applyNow,
     quality: QUALITY,
   };

@@ -16,6 +16,7 @@ import { PALETTE } from './palette.js';
 export class RacePad {
   constructor(scene, glow, position = new THREE.Vector3(0, 0, 16), opts = {}) {
     this.glow = glow;
+    this.pools = opts.pools ?? null;
     this.position = position.clone();
     this.radius = opts.radius ?? 3.2;
     this.accent = opts.accent ?? PALETTE.accentGreen;
@@ -56,6 +57,7 @@ export class RacePad {
       this.position.clone().setY(1.2), this.accent, 7, 0.22
     );
     this._haloOpacity = 0.22;
+    this.pools?.add(this.position.clone().setY(0.16), this.accent, 17, 0.4);
 
     this.label = this._makeLabel(opts.label ?? 'NEON LINE');
     this.label.position.set(0, 3.6, 0);

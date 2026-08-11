@@ -87,7 +87,7 @@ A small personal space, reachable from any district. Window seat, tank, shelf. A
 
 ---
 
-## 4. Game-in-Game #1 — STEEL GARDEN (VR Sword Combat)
+## 4. Game-in-Game #1 — STEEL GARDEN (VR Sword Combat) — *implemented*
 
 ### 4.1 Framing
 
@@ -128,7 +128,7 @@ Cosmetic blades and a wall scroll for your apartment. Nothing that gates content
 
 ---
 
-## 5. Game-in-Game #2 — NEON LINE (the racing game)
+## 5. Game-in-Game #2 — NEON LINE (the racing game) — *implemented*
 
 ### 5.1 Framing
 
@@ -164,7 +164,7 @@ The rail line is already the most-loved passive space in the city (§3.2). NEON 
 
 ---
 
-## 6. Game-in-Game #3 — DRIFT (the AR game)
+## 6. Game-in-Game #3 — DRIFT (the AR game) — *designed, not built*
 
 ### 6.1 The Conceit
 

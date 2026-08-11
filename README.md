@@ -13,8 +13,9 @@ The city is the game. No quests, no levels, no timers, nothing that expires.
 | **Kaisei, street level** | Procedural neon city — walkable, wet, raining if you want it to. Aircars, rooftop plant, lit vending machines, a distant skyline |
 | **The Lantern** | The chill space. A rooftop deck up a lit ramp: cushions you can sit on, a reflecting pool, paper lanterns, and deliberately nothing to do |
 | **NEON LINE** | The racing game. Three laps of a hover-craft circuit over the rooftops, with boost gates, lap timing, and a ghost of your best run |
+| **STEEL GARDEN** | The sword game. Holographic enemies telegraph a strike axis; you parry by presenting the blade across it. Waves, parry scoring, three lives |
 
-Designed but not yet built: **STEEL GARDEN** (sword combat) and **DRIFT** (the AR game). See the design doc.
+Designed but not yet built: **DRIFT** (the AR game). See the design doc.
 
 ## Running it
 
@@ -27,7 +28,7 @@ The dev server runs over HTTPS with a self-signed certificate, because WebXR req
 
 **On a Quest 3:** open the LAN address it prints (`https://<your-machine-ip>:5173`) in the headset browser, accept the certificate warning, and press **Enter VR**.
 
-**On desktop:** open the same URL. WASD to walk, mouse to look (click to capture), **Space** on the green pad to race, **R** to toggle rain, **Tab** or **G** for graphics settings.
+**On desktop:** open the same URL. WASD to walk, mouse to look (click to capture), **Space** on a lit pad to enter a game (green = NEON LINE, purple = STEEL GARDEN), **R** to toggle rain, **Tab** or **G** for graphics settings.
 
 **In VR:** left stick walks, right stick snap-turns, trigger sits you on a cushion or launches you from the race pad, and squeezing the left grip raises a graphics panel on your wrist. Everything is seated-playable.
 
@@ -70,7 +71,7 @@ src/
   core/       engine, settings, quality resolution, stats, procedural audio, RNG
   world/      palette, sky and IBL, materials, city, the Lantern, glow batching
   player/     locomotion, collision, comfort
-  games/      NEON LINE
+  games/      NEON LINE, STEEL GARDEN
   ui/         settings panel and overlay, in-VR wrist panel
 tools/        headless smoke test and visual probes
 ```

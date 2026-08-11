@@ -9,6 +9,11 @@ import { PALETTE } from './palette.js';
 const BLOCK = 42;      // metres between street centrelines
 const STREET = 14;     // street width
 
+// Light pools sit just above the pavement slabs, not just above the road.
+// At road height every pool near a kerb is buried under the 12cm pavement box
+// and simply never appears.
+const POOL_Y = 0.16;
+
 /**
  * Kaisei's street level.
  *
@@ -24,9 +29,10 @@ const STREET = 14;     // street width
  *     one uniform write each, which is what buys the headroom for the props.
  */
 export class City {
-  constructor(scene, glow) {
+  constructor(scene, glow, pools) {
     this.scene = scene;
     this.glow = glow;
+    this.pools = pools;
     this.group = new THREE.Group();
     scene.add(this.group);
 
@@ -455,6 +461,14 @@ export class City {
       parts.push(g);
 
       this.glow.add(pos, s.color, Math.max(s.w, s.h) * 2.0, 0.34);
+      // The sign's spill on the wet road below it. Height drives falloff: a
+      // sign 12m up throws a wide faint pool, one at 3m a tight bright one.
+      this.pools?.add(
+        new THREE.Vector3(s.x, POOL_Y, s.z),
+        s.color,
+        6 + s.y * 0.9,
+        0.42 / (1 + s.y * 0.10)
+      );
     }
 
     if (parts.length) {
@@ -531,6 +545,7 @@ export class City {
         m.identity().setPosition(l.x, 2.6, l.z);
         post.setMatrixAt(i, m);
         this.glow.add(new THREE.Vector3(l.x, 5.3, l.z), PALETTE.accentBlue, 1.7, 0.5);
+      this.pools?.add(new THREE.Vector3(l.x, POOL_Y, l.z), PALETTE.accentBlue, 11.0, 0.26);
       });
       post.instanceMatrix.needsUpdate = true;
       this.group.add(post);
@@ -630,6 +645,7 @@ export class City {
         face.setColorAt(i, c);
 
         this.glow.add(new THREE.Vector3(v.x, 1.2, v.z), v.color, 1.6, 0.3);
+        this.pools?.add(new THREE.Vector3(v.x, POOL_Y, v.z), v.color, 5.5, 0.3);
       });
       shell.instanceMatrix.needsUpdate = true;
       face.instanceMatrix.needsUpdate = true;
