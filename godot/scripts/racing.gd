@@ -158,10 +158,13 @@ func _build_ribbon() -> void:
 	mat.emission_enabled = true
 	mat.emission = Palette.ACCENT_BLUE
 	mat.emission_energy_multiplier = 0.15
+	# Handed to SurfaceTool before commit, rather than set afterwards via
+	# `mesh.mesh.surface_set_material`: MeshInstance3D.mesh is the base Mesh
+	# type, which has no surface_set_material, so that route is a parse error.
+	st.set_material(mat)
 
 	var mesh := MeshInstance3D.new()
 	mesh.mesh = st.commit()
-	mesh.mesh.surface_set_material(0, mat)
 	add_child(mesh)
 
 
@@ -174,7 +177,7 @@ func begin() -> void:
 
 
 func _reset_rivals() -> void:
-	for r in rivals:
+	for r: Rival in rivals:
 		if is_instance_valid(r.body):
 			r.body.queue_free()
 	rivals.clear()
@@ -239,7 +242,7 @@ func _process(delta: float) -> void:
 
 
 func _update_rivals(delta: float) -> void:
-	for r in rivals:
+	for r: Rival in rivals:
 		# Slow for corners: sample the curve a little ahead and compare
 		# headings. A car that takes corners at full speed reads as being on
 		# rails, which is the opposite of the point.

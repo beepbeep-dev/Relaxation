@@ -69,7 +69,7 @@ func _ready() -> void:
 
 
 func begin() -> void:
-	for e in enemies:
+	for e: Enemy in enemies:
 		if is_instance_valid(e.body):
 			e.body.queue_free()
 	enemies.clear()
@@ -162,7 +162,12 @@ func _build_body() -> Node3D:
 func _update_enemies(delta: float) -> void:
 	var head_local: Vector3 = to_local(_player_head_global())
 
-	for e in enemies.duplicate():
+	# `e` is annotated because Array.duplicate() hands back an untyped array,
+	# so without this the loop variable is a Variant and every `:=` below
+	# fails to infer ("Cannot infer the type of 'dx'"). The copy itself is
+	# deliberate: the body removes enemies, and mutating the array being
+	# iterated skips elements.
+	for e: Enemy in enemies.duplicate():
 		if e.state == State.FALLING:
 			e.fall += delta * 2.2
 			if e.fall >= 1.0:
@@ -171,8 +176,8 @@ func _update_enemies(delta: float) -> void:
 				_pose(e)
 			continue
 
-		var dx := head_local.x - e.pos.x
-		var dz := head_local.z - e.pos.z
+		var dx: float = head_local.x - e.pos.x
+		var dz: float = head_local.z - e.pos.z
 		var distance := sqrt(dx * dx + dz * dz)
 		if distance <= 0.0:
 			distance = 1e-4

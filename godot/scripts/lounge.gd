@@ -64,8 +64,8 @@ func _build_deck() -> void:
 	col_mat.roughness = 0.4
 	col_mat.metallic = 0.8
 
-	for sx in [-1.0, 1.0]:
-		for sz in [-1.0, 1.0]:
+	for sx: float in [-1.0, 1.0]:
+		for sz: float in [-1.0, 1.0]:
 			var col := MeshInstance3D.new()
 			var col_mesh := CylinderMesh.new()
 			col_mesh.top_radius = 0.34
@@ -121,7 +121,7 @@ func _build_ramp() -> void:
 		var t := float(i) / 10.0
 		var z := lerpf(start_z, end_z, t)
 		var y := lerpf(DECK_Y, 0.0, t) + 0.25
-		for x in [-2.6, 2.6]:
+		for x: float in [-2.6, 2.6]:
 			var pip := MeshInstance3D.new()
 			var pip_mesh := BoxMesh.new()
 			pip_mesh.size = Vector3(0.12, 0.06, 0.5)
@@ -160,7 +160,7 @@ func _build_seating() -> void:
 		mat.normal_texture = normal
 		mat.normal_scale = 0.7
 
-	var spots := [
+	var spots: Array[Vector3] = [
 		Vector3(-7.0, DECK_Y + 0.45, DECK_Z - 6.0),
 		Vector3(0.0, DECK_Y + 0.45, DECK_Z - 7.0),
 		Vector3(7.0, DECK_Y + 0.45, DECK_Z - 6.0),
@@ -169,7 +169,7 @@ func _build_seating() -> void:
 		Vector3(0.0, DECK_Y + 0.45, DECK_Z + 5.0),
 	]
 
-	for p in spots:
+	for p: Vector3 in spots:
 		var seat := MeshInstance3D.new()
 		var mesh := BoxMesh.new()
 		mesh.size = Vector3(2.2, 0.5, 0.9)

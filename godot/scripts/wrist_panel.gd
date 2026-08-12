@@ -1,4 +1,5 @@
 extends Node3D
+class_name WristPanel
 
 ## The in-headset graphics panel, ported from src/ui/wrist.js.
 ##

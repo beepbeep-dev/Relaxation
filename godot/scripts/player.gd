@@ -30,17 +30,59 @@ var _turn_latched := false
 var _velocity_y := 0.0
 
 ## Anything with a `ground_height(x, z) -> float` method. The lounge supplies
-## the deck and the ramp; the street is the 0.0 fallback. Kept as a loose
-## reference rather than a hard type so the player does not have to know what
-## kinds of walkable surface exist.
-@onready var _terrain: Node = get_tree().current_scene.get_node_or_null("Lounge")
+## the deck and the ramp; the street is the 0.0 fallback. Deliberately left
+## untyped so the player does not have to know what kinds of walkable surface
+## exist — annotating it `Node` would make the duck-typed call below a parse
+## error, because GDScript rejects an unknown method on a statically known
+## type even behind a has_method() guard.
+@onready var _terrain = get_tree().current_scene.get_node_or_null("Lounge")
+
+var _wrist: WristPanel
+var _grip_latched := false
+var _trigger_latched := false
+
+
+func _ready() -> void:
+	# The panel rides the left wrist, so it is parented to that controller
+	# and comes along with the hand rather than floating in the world.
+	_wrist = WristPanel.new()
+	left_hand.add_child(_wrist)
+	# Tilted up and back, roughly where a watch face sits when you turn your
+	# wrist to look at it.
+	_wrist.position = Vector3(0, 0.04, -0.06)
+	_wrist.rotation_degrees = Vector3(-50, 0, 0)
 
 
 func _process(delta: float) -> void:
 	_snap_cooldown = maxf(0.0, _snap_cooldown - delta)
+	_handle_panel()
 	_handle_snap_turn()
 	_handle_movement(delta)
 	_handle_ground(delta)
+
+
+func _handle_panel() -> void:
+	# Left grip raises the panel. Latched, so holding the grip toggles once
+	# rather than strobing it every frame.
+	var grip := left_hand.get_float("grip") > 0.7
+	if grip and not _grip_latched:
+		_wrist.toggle()
+	_grip_latched = grip
+
+	var trigger := right_hand.get_float("trigger") > 0.6
+	var on_panel := false
+	if _wrist.visible:
+		var xf := right_hand.global_transform
+		on_panel = _wrist.aim(xf.origin, -xf.basis.z)
+		if trigger and not _trigger_latched and on_panel:
+			_wrist.press()
+	_trigger_latched = trigger
+
+	# While the panel is up and the pointer is on it, the panel owns the
+	# trigger. Without this the same press both edits a setting and fires
+	# whatever the trigger does in the world — which in the WebXR build meant
+	# opening settings inside a minigame also dumped you out of it.
+	set_meta("trigger_consumed", _wrist.visible and on_panel)
 
 
 func _ground_height(x: float, z: float) -> float:

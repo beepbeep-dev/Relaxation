@@ -134,12 +134,18 @@ func _add_cap(caps: Array[Transform3D], at: Vector3, w: float, d: float) -> void
 
 func _build_multimesh(transforms: Array[Transform3D], tints: Array[Color],
 		material: Material) -> MultiMeshInstance3D:
+	# Configured through a BoxMesh-typed local, not through `mm.mesh`:
+	# MultiMesh.mesh is declared as the base Mesh, which has neither `size`
+	# nor `material`, so touching them via that property is a parse error
+	# rather than something that surfaces at runtime.
+	var box := BoxMesh.new()
+	box.size = Vector3.ONE
+	box.material = material
+
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = not tints.is_empty()
-	mm.mesh = BoxMesh.new()
-	mm.mesh.size = Vector3.ONE
-	mm.mesh.material = material
+	mm.mesh = box
 	mm.instance_count = transforms.size()
 	for i in transforms.size():
 		mm.set_instance_transform(i, transforms[i])
