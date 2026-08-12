@@ -26,6 +26,14 @@ env:
   # version exactly or the export silently falls back and fails.
   GODOT_RELEASE: stable
 
+# Pushing twice in quick succession otherwise leaves two runs racing, both
+# pulling ~1GB of engine and templates from the same CDN — which is how the
+# download started failing with "Connection died" in the first place. Only
+# the newest commit is worth building.
+concurrency:
+  group: godot-android
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Export APK
@@ -51,14 +59,37 @@ jobs:
         run: |
           sdkmanager --install "platform-tools" "build-tools;34.0.0" "platforms;android-34" "cmdline-tools;latest"
 
+      # Cached so a rerun does not re-pull ~1GB from the release CDN. The key
+      # is the exact version, so bumping GODOT_VERSION fetches fresh rather
+      # than silently building against a stale engine.
+      - name: Cache Godot download
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-dl
+          key: godot-${{ env.GODOT_VERSION }}-${{ env.GODOT_RELEASE }}
+
       - name: Download Godot ${{ env.GODOT_VERSION }} and export templates
         run: |
           set -euo pipefail
           BASE="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-${GODOT_RELEASE}"
-          curl -fsSL -o godot.zip "${BASE}/Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_linux.x86_64.zip"
-          curl -fsSL -o templates.tpz "${BASE}/Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_export_templates.tpz"
+          mkdir -p ~/godot-dl
 
-          unzip -q godot.zip
+          # --retry with --retry-all-errors because this step already failed
+          # once on a bare "curl: (56) Connection died": a CDN hiccup on a
+          # large file, nothing to do with the project. Without
+          # --retry-all-errors curl only retries a narrow set of transient
+          # HTTP codes and gives up on exactly this class of connection drop.
+          fetch() {
+            local url="$1" out="$2"
+            [ -s "$out" ] && { echo "cached: $out"; return; }
+            curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 30 -o "$out" "$url"
+          }
+          fetch "${BASE}/Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_linux.x86_64.zip" ~/godot-dl/godot.zip
+          fetch "${BASE}/Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_export_templates.tpz" ~/godot-dl/templates.tpz
+
+          unzip -oq ~/godot-dl/godot.zip
           mv Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_linux.x86_64 /usr/local/bin/godot
           chmod +x /usr/local/bin/godot
 
@@ -66,7 +97,7 @@ jobs:
           # in, or the export reports "no export template found" with the
           # templates plainly sitting on disk.
           mkdir -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_RELEASE}
-          unzip -q templates.tpz
+          unzip -oq ~/godot-dl/templates.tpz
           mv templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_RELEASE}/
 
       - name: Generate a debug keystore
