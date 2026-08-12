@@ -19,6 +19,10 @@ on:
     paths:
       - 'godot/**'
       - '.github/workflows/godot-android-build.yml'
+      # The workflow calls these, so a fix to one of them needs to rebuild.
+      # Leaving them out meant a real fix pushed and silently built nothing.
+      - 'tools/pick_vendors_release.py'
+      - 'tools/verify_vr_apk.py'
 
 env:
   GODOT_VERSION: 4.3
