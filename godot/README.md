@@ -64,20 +64,56 @@ both ports:
 | Two real lights, everything else emissive | Unchanged arithmetic |
 | Snap turn, capped speed, comfort vignette | Design constraints, not engine constraints |
 
-## Status, honestly
+## Status
 
-Everything here was written without a Godot install available in the
-development sandbox (the environment's egress policy blocks
-`github.com`/`godotengine.org` downloads, and the only Godot in apt is
-3.5, which cannot open a Godot 4 project). **The CI runner is therefore the
-first machine that actually opens this project** — it has unrestricted
-network access, so it can fetch the real engine and export templates.
+**The APK builds.** ~77MB installed, ~27MB as the downloaded artifact.
 
-That means the workflow is also the test: a red run is real information
-about a real error, and iterating against those logs is how this gets to a
-working APK. Do not read a green checkmark on the scaffolding commit as
-proof the project opens — read the workflow run.
+Everything here was written without a Godot install in the development
+sandbox (its egress policy blocks the Godot downloads, and the only Godot in
+apt is 3.5, which cannot open a Godot 4 project), so the CI runner was the
+first machine to open this project. The workflow was therefore also the
+test, and it earned that role — every failure below was real:
 
-Still to port from the WebXR build: the two minigames, the wrist settings
-panel, audio, and the lounge. The city, palette, facade shader, locomotion
-and comfort rules are here.
+| Failure | Cause |
+|---|---|
+| `Android build template not installed` | gradle builds need the template unpacked into `res://android/`, a separate step from installing export templates |
+| That step hung 30+ min | `--install-android-build-template` does not return in headless CI; the workflow unzips `android_source.zip` directly instead |
+| `"Min SDK" should be >= 24` | the mobile renderer requires it (Vulkan) |
+| `curl: (56) Connection died` | CDN hiccup; fixed with retries, caching and a concurrency group |
+| `Cannot infer the type of "dx"` | `Array.duplicate()` returns an *untyped* array, so the loop variable was Variant |
+| **Configuration error naming nothing** | **`import_etc2_astc` was off** |
+
+That last one cost the most rounds and deserves the detail: Godot refuses an
+Android export unless
+`rendering/textures/vram_compression/import_etc2_astc` is enabled, because
+mobile GPUs cannot sample the desktop-oriented S3TC/BPTC formats the
+importer otherwise emits. It **defaults to false**, and the resulting export
+error prints an empty list of problems — so the log says only that
+configuration is wrong, never what. If you hit an empty configuration error
+on an Android export, check this setting first.
+
+`scripts/smoke.gd` exists because of that loop. It builds the scene
+headlessly and steps both games, so parse errors and broken geometry surface
+in seconds instead of a multi-minute CI round trip, and it asserts what the
+design actually claims:
+
+```
+ok  city built 2 MultiMesh draw calls
+ok  city placed 1216 instanced boxes
+ok  lounge has 6 seats
+ok  deck is walkable at 6.0m
+ok  ramp mid-point at 3.00m, between street and deck
+ok  rivals start behind the line (lap -1)
+ok  top speed 132 km/h stays a car, not a missile
+ok  opponents closed from 6.5m to 1.9m
+ok  opponents reached striking distance (1.90m)
+```
+
+The last two are there because opponents once converged on the arena origin
+instead of the player and stopped short — a bug that reached a real player.
+It is an assertion now, so it cannot come back quietly.
+
+Still to port from the WebXR build: audio, the boost-gate scoring and HUD
+for the race, and hooking the sword and race entry to the pads rather than
+having both always live. The city, palette, facade shader, locomotion,
+comfort rules, lounge, both games and the wrist panel are here.
