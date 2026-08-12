@@ -92,6 +92,18 @@ jobs:
           # when it worked, hence the guard.
           godot --headless --import || true
 
+      - name: Install the Android build template
+        working-directory: godot
+        run: |
+          # The preset sets gradle_build/use_gradle_build=true, which is what
+          # an OpenXR/Quest export needs — the plain prebuilt APK template
+          # cannot add the OpenXR loader. A gradle build in turn needs the
+          # build template unpacked into res://android/, which is a separate
+          # step from installing the export templates and fails with
+          # "Android build template not installed in the project" if skipped.
+          # It is generated, not authored, so .gitignore excludes godot/android/.
+          godot --headless --install-android-build-template
+
       - name: Export APK
         working-directory: godot
         run: |
