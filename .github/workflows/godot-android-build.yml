@@ -133,6 +133,30 @@ jobs:
           # SDK path with it. That is the most likely reason the export kept
           # failing with a configuration error naming nothing at all.
 
+      - name: Install the OpenXR vendors plugin
+        run: |
+          set -euo pipefail
+          # Godot 4.2+ moved Meta/Quest OpenXR support out of core and into
+          # this plugin. Without it the export silently produces an ordinary
+          # Android app — no libopenxr_loader.so and no VR intent categories
+          # — so the headset launches it as a flat 2D panel instead of
+          # entering VR. That is not a guess: the first APK was unzipped and
+          # both were confirmed missing.
+          curl -fsSL --retry 5 --retry-all-errors \
+            "https://api.github.com/repos/GodotVR/godot_openxr_vendors/releases" -o releases.json
+          python3 tools/pick_vendors_release.py releases.json > plugin_url.txt
+          echo "plugin asset: $(cat plugin_url.txt)"
+          curl -fsSL --retry 5 --retry-all-errors -o vendors.zip "$(cat plugin_url.txt)"
+
+          rm -rf /tmp/vendors && mkdir -p /tmp/vendors
+          unzip -oq vendors.zip -d /tmp/vendors
+          # The release zip has addons/ either at its root or one level down.
+          SRC=$(find /tmp/vendors -maxdepth 2 -type d -name addons | head -1)
+          [ -n "$SRC" ] || { echo "no addons/ directory in the release zip"; find /tmp/vendors -maxdepth 3 | head -40; exit 1; }
+          mkdir -p godot/addons
+          cp -r "$SRC"/* godot/addons/
+          ls godot/addons/
+
       - name: Import project
         working-directory: godot
         run: |
@@ -269,6 +293,15 @@ jobs:
             exit 1
           fi
           ls -la ../build/
+
+      - name: Verify the APK is actually a VR app
+        run: |
+          set -euo pipefail
+          # A build that succeeds says nothing about whether the headset will
+          # treat the result as immersive — the first working APK installed
+          # fine and opened as a flat 2D panel. This fails the build instead
+          # of shipping that again.
+          python3 tools/verify_vr_apk.py build/kaisei.apk
 
       - uses: actions/upload-artifact@v4
         with:

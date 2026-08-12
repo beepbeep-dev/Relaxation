@@ -21,6 +21,14 @@ config/icon="res://icon.svg"
 
 Palette="*res://scripts/palette.gd"
 
+[editor_plugins]
+
+; Must be enabled, not merely present on disk: the vendors plugin does its
+; work as an *export* plugin, injecting the OpenXR loader library and the VR
+; intent categories into the APK. A disabled plugin exports an ordinary
+; Android app that the headset opens as a flat 2D panel.
+enabled=PackedStringArray("res://addons/godotopenxrvendors/plugin.cfg")
+
 [display]
 
 ; Stereo rendering is driven by the XR interface, not by the window. The
