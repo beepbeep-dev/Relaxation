@@ -36,8 +36,20 @@ concurrency:
 
 jobs:
   build:
-    name: Export APK
+    name: Export APK (vendors ${{ matrix.vendors_major }}.x)
     runs-on: ubuntu-latest
+    # Two candidates, because the plugin's own version scheme is ambiguous:
+    # it has 5.x tags and there is no Godot 5, so the tags are plugin
+    # versions rather than Godot versions, and which generation pairs with
+    # Godot 4.3 is not something this environment can confirm — the egress
+    # policy blocks that repository. The 3.x build packaged correctly but
+    # would not start on the headset, which is what a GDExtension built
+    # against a different Godot ABI does. Building both settles it by test
+    # instead of by argument.
+    strategy:
+      fail-fast: false
+      matrix:
+        vendors_major: ["3", "4"]
     # A headless Godot command that decides to wait for something will wait
     # forever, and the default job timeout is six hours of billed runner
     # time reporting nothing. Twenty-five minutes is generous for a gradle
@@ -144,7 +156,7 @@ jobs:
           # both were confirmed missing.
           curl -fsSL --retry 5 --retry-all-errors \
             "https://api.github.com/repos/GodotVR/godot_openxr_vendors/releases" -o releases.json
-          python3 tools/pick_vendors_release.py releases.json > plugin_url.txt
+          python3 tools/pick_vendors_release.py releases.json "${{ matrix.vendors_major }}" > plugin_url.txt
           echo "plugin asset: $(cat plugin_url.txt)"
           curl -fsSL --retry 5 --retry-all-errors -o vendors.zip "$(cat plugin_url.txt)"
 
@@ -156,6 +168,13 @@ jobs:
           mkdir -p godot/addons
           cp -r "$SRC"/* godot/addons/
           ls godot/addons/
+
+          # The .gdextension file states which Godot versions the compiled
+          # library will load into. A mismatch here is invisible at build
+          # time and shows up as an app that will not start, so print it.
+          echo "::group::gdextension compatibility"
+          find godot/addons -name "*.gdextension" -print -exec cat {} \;
+          echo "::endgroup::"
 
       - name: Import project
         working-directory: godot
@@ -305,6 +324,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: kaisei-quest-apk
+          name: kaisei-quest-apk-vendors${{ matrix.vendors_major }}
           path: build/kaisei.apk
           if-no-files-found: error

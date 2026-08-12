@@ -15,23 +15,24 @@ import json
 import re
 import sys
 
-WANTED_MAJOR = "3"   # godot_openxr_vendors 3.x -> Godot 4.3
+DEFAULT_MAJOR = "3"   # godot_openxr_vendors 3.x is believed to target Godot 4.3
 
 
 def main() -> int:
     releases = json.load(open(sys.argv[1]))
+    wanted_major = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_MAJOR
     tags = [r["tag_name"] for r in releases]
     print(f"available tags: {tags[:12]}", file=sys.stderr)
 
     stable = [r for r in releases if not r.get("prerelease")]
     matching = [r for r in stable
-                if re.match(rf"^v?{WANTED_MAJOR}\.", r["tag_name"])]
+                if re.match(rf"^v?{wanted_major}\.", r["tag_name"])]
 
     if matching:
         chosen = matching[0]
     elif stable:
         chosen = stable[0]
-        print(f"WARNING: no {WANTED_MAJOR}.x release found; falling back to "
+        print(f"WARNING: no {wanted_major}.x release found; falling back to "
               f"{chosen['tag_name']}, which may not match this Godot version.",
               file=sys.stderr)
     else:
