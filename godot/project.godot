@@ -55,6 +55,13 @@ lights_and_shadows/directional_shadow/soft_shadow_filter_quality=1
 
 environment/defaults/default_clear_color=Color(0.031, 0.024, 0.059, 1)
 
+; Required for any Android export, and it defaults to *false*. Godot refuses
+; the export without it ("Target platform requires 'ETC2/ASTC' texture
+; compression"), because mobile GPUs cannot sample the desktop-oriented
+; S3TC/BPTC formats the importer would otherwise produce. Enabling it makes
+; the importer emit ETC2/ASTC variants for every texture in the project.
+textures/vram_compression/import_etc2_astc=true
+
 [xr]
 
 openxr/enabled=true

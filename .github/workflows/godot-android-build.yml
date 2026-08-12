@@ -239,7 +239,35 @@ jobs:
           # project due to configuration errors:" followed by an empty list,
           # which says nothing actionable. Verbose output names the check
           # that actually failed.
-          godot --headless --verbose --export-debug "Quest" ../build/kaisei.apk
+          # On failure, probe the variants that isolate *which* precondition
+          # is unmet, rather than spending one CI round per hypothesis. The
+          # export error names nothing (it prints an empty list), so the
+          # information has to come from which variants succeed:
+          #   - release exporting but debug not  => the debug keystore
+          #   - non-gradle exporting but gradle not => the build template
+          # Each probe prints its own outcome and the step still fails.
+          if ! godot --headless --verbose --export-debug "Quest" ../build/kaisei.apk; then
+            echo "::group::probe: state"
+            cat android/.build_version || true
+            ls -la android/build/build.gradle || true
+            ls -la "$GITHUB_WORKSPACE/debug.keystore" || true
+            grep -n "sdk_path\|keystore" ~/.config/godot/editor_settings-4.tres || true
+            echo "::endgroup::"
+
+            echo "::group::probe: --export-release"
+            godot --headless --export-release "Quest" ../build/probe-release.apk \
+              && echo "PROBE: release export SUCCEEDED (debug keystore is the blocker)" \
+              || echo "PROBE: release export also failed"
+            echo "::endgroup::"
+
+            echo "::group::probe: gradle build disabled"
+            sed -i 's|gradle_build/use_gradle_build=true|gradle_build/use_gradle_build=false|' export_presets.cfg
+            godot --headless --export-debug "Quest" ../build/probe-nogradle.apk \
+              && echo "PROBE: non-gradle export SUCCEEDED (gradle/build template is the blocker)" \
+              || echo "PROBE: non-gradle export also failed"
+            echo "::endgroup::"
+            exit 1
+          fi
           ls -la ../build/
 
       - uses: actions/upload-artifact@v4
