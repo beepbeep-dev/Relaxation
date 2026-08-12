@@ -82,6 +82,7 @@ test, and it earned that role — every failure below was real:
 | `curl: (56) Connection died` | CDN hiccup; fixed with retries, caching and a concurrency group |
 | `Cannot infer the type of "dx"` | `Array.duplicate()` returns an *untyped* array, so the loop variable was Variant |
 | **Configuration error naming nothing** | **`import_etc2_astc` was off** |
+| **Built, installed, launched — as a flat 2D app** | **the OpenXR vendors plugin was missing** |
 
 That last one cost the most rounds and deserves the detail: Godot refuses an
 Android export unless
@@ -91,6 +92,30 @@ importer otherwise emits. It **defaults to false**, and the resulting export
 error prints an empty list of problems — so the log says only that
 configuration is wrong, never what. If you hit an empty configuration error
 on an Android export, check this setting first.
+
+The flat-launch one is the one to internalise: **a build succeeding says
+nothing about whether a headset will treat the result as immersive.** That
+APK compiled, installed and ran, and was still wrong. Godot 4.2+ moved
+Meta/Quest OpenXR support out of core into
+[godot_openxr_vendors](https://github.com/GodotVR/godot_openxr_vendors), so
+`xr_features/xr_mode=1` on its own did nothing: the APK shipped with no
+`libopenxr_loader.so` and no VR intent categories, OpenXR failed to
+initialise, and `main.gd` took its "running flat" fallback.
+
+`tools/verify_vr_apk.py` now unzips the built APK and fails the build unless
+the loader and both intent categories are present. It was tested against the
+known-bad APK first — a check that has never rejected anything is not yet
+known to work.
+
+**Open question: the plugin version.** The workflow picks the newest `3.x`
+release, on the reasoning that the repo's `5.x` tags cannot be Godot
+versions (there is no Godot 5), so its tags are plugin versions and `3.x` is
+the generation matching Godot 4.3. That produces an APK that passes
+verification, but packaging correctly and running correctly are different
+claims — a GDExtension built against a different Godot ABI can still fail to
+load at runtime. If the headset ever launches this flat again, check
+`adb logcat | grep -i openxr` and try `WANTED_MAJOR = "4"` in
+`tools/pick_vendors_release.py`.
 
 `scripts/smoke.gd` exists because of that loop. It builds the scene
 headlessly and steps both games, so parse errors and broken geometry surface
