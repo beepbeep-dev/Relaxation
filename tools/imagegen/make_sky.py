@@ -79,6 +79,37 @@ def wrap_seam(img: Image.Image, blend: int = 96) -> Image.Image:
     return Image.fromarray(np.clip(a, 0, 255).astype(np.uint8))
 
 
+def suppress_below_horizon(img: Image.Image, fade_top: float = 0.44,
+                           fade_bottom: float = 0.56) -> Image.Image:
+    """
+    Erase generated detail below the horizon, keeping only the colour ramp.
+
+    The prompt asks for "no ground, no buildings" and the model produces them
+    anyway: the first run came back with a city skyline painted along the
+    bottom. In a game whose entire subject is a city that is *actually
+    modelled*, a second painted-on skyline is the worst possible artefact —
+    it sits at a fixed distance, never parallaxes, and reads instantly as a
+    photograph glued behind the real geometry.
+
+    Rather than fight it with prompt wording, the lower band is replaced by
+    its own row means. Detail (deviation from each row's mean) is faded out
+    across `fade_top`..`fade_bottom` in normalised height, so clouds and
+    stars above the horizon survive untouched and everything below becomes a
+    clean gradient. Fading rather than hard-cutting matters: a step here
+    would be a visible line exactly where the eye already looks.
+    """
+    a = np.asarray(img.convert("RGB"), dtype=np.float32)
+    h, w, _ = a.shape
+
+    v = np.linspace(0.0, 1.0, h, dtype=np.float32)
+    keep = np.clip((fade_bottom - v) / max(fade_bottom - fade_top, 1e-6), 0.0, 1.0)
+    keep = keep[:, None, None]
+
+    row_mean = a.mean(axis=1, keepdims=True)
+    out = row_mean + (a - row_mean) * keep
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
+
+
 def force_palette(img: Image.Image, amount: float = 0.62) -> Image.Image:
     """
     Blend the generated sky towards the game's vertical colour script.
@@ -141,6 +172,7 @@ def main() -> int:
     ).images[0]
 
     image = force_palette(image)
+    image = suppress_below_horizon(image)
     image = image.resize((OUT_W, OUT_H), Image.LANCZOS)
     # Seam last, at final resolution, so the blend band is not resampled
     # afterwards — resampling across the join is what reintroduces a faint
