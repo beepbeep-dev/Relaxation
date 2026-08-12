@@ -49,12 +49,23 @@ func _setup_lighting() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	var sky := Sky.new()
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Palette.SKY_ZENITH
-	sky_mat.sky_horizon_color = Palette.SKY_HORIZON
-	sky_mat.ground_bottom_color = Palette.SKY_GROUND
-	sky_mat.ground_horizon_color = Palette.SKY_HORIZON
-	sky.sky_material = sky_mat
+
+	# The generated panorama if it is there, the procedural gradient if not.
+	# The panorama carries cloud structure and a horizon glow that a
+	# three-stop gradient cannot, but the gradient is a genuinely fine
+	# fallback rather than an error case — it is what the WebXR build ships.
+	var panorama := load("res://assets/sky_panorama.jpg") as Texture2D
+	if panorama:
+		var pano_mat := PanoramaSkyMaterial.new()
+		pano_mat.panorama = panorama
+		sky.sky_material = pano_mat
+	else:
+		var sky_mat := ProceduralSkyMaterial.new()
+		sky_mat.sky_top_color = Palette.SKY_ZENITH
+		sky_mat.sky_horizon_color = Palette.SKY_HORIZON
+		sky_mat.ground_bottom_color = Palette.SKY_GROUND
+		sky_mat.ground_horizon_color = Palette.SKY_HORIZON
+		sky.sky_material = sky_mat
 	env.sky = sky
 
 	# Ambient comes from the sky itself, which is what keeps shadows purple
@@ -86,6 +97,24 @@ func _setup_ground() -> void:
 	mat.albedo_color = Palette.WET_GROUND
 	mat.roughness = 0.6
 	mat.metallic = 0.22
+
+	# The generated asphalt goes on as albedo *and* normal. The albedo is
+	# near-greyscale by construction, so it multiplies against the palette
+	# colour above and adds grain without dragging its own hue into a strict
+	# three-colour script. The normal map is a Sobel filter over that exact
+	# albedo (tools/imagegen/make_textures.py), so its bumps line up with the
+	# grain actually on screen rather than being generic noise — that
+	# correspondence is what makes the road catch the key light per-grain
+	# instead of shading as one flat plane.
+	var albedo := load("res://assets/textures/asphalt.jpg") as Texture2D
+	var normal := load("res://assets/textures/asphalt_n.jpg") as Texture2D
+	if albedo:
+		mat.albedo_texture = albedo
+		mat.uv1_scale = Vector3(90, 90, 1)
+	if normal:
+		mat.normal_enabled = true
+		mat.normal_texture = normal
+		mat.normal_scale = 0.55
 
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(600, 600)

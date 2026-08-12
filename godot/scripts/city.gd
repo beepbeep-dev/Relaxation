@@ -162,4 +162,17 @@ func _parapet_material() -> Material:
 	mat.albedo_color = Palette.DARK_METAL
 	mat.roughness = 0.38
 	mat.metallic = 0.85
+
+	# Brushed metal grain on the roof edges. Near-greyscale albedo, so the
+	# palette colour above still decides the hue; the paired normal map is
+	# derived from this same image, so its relief matches the visible grain.
+	var albedo := load("res://assets/textures/panel.jpg") as Texture2D
+	var normal := load("res://assets/textures/panel_n.jpg") as Texture2D
+	if albedo:
+		mat.albedo_texture = albedo
+		mat.uv1_scale = Vector3(3, 3, 1)
+	if normal:
+		mat.normal_enabled = true
+		mat.normal_texture = normal
+		mat.normal_scale = 0.5
 	return mat
