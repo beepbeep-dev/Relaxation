@@ -23,14 +23,48 @@ const TURN_THRESHOLD := 0.7
 @onready var left_hand: XRController3D = $LeftHand
 @onready var right_hand: XRController3D = $RightHand
 
+const GRAVITY := 18.0
+
 var _snap_cooldown := 0.0
 var _turn_latched := false
+var _velocity_y := 0.0
+
+## Anything with a `ground_height(x, z) -> float` method. The lounge supplies
+## the deck and the ramp; the street is the 0.0 fallback. Kept as a loose
+## reference rather than a hard type so the player does not have to know what
+## kinds of walkable surface exist.
+@onready var _terrain: Node = get_tree().current_scene.get_node_or_null("Lounge")
 
 
 func _process(delta: float) -> void:
 	_snap_cooldown = maxf(0.0, _snap_cooldown - delta)
 	_handle_snap_turn()
 	_handle_movement(delta)
+	_handle_ground(delta)
+
+
+func _ground_height(x: float, z: float) -> float:
+	if _terrain and _terrain.has_method("ground_height"):
+		return _terrain.ground_height(x, z)
+	return 0.0
+
+
+func _handle_ground(delta: float) -> void:
+	# Snap up instantly, fall smoothly. Stepping *up* in discrete jumps is
+	# unnoticeable; dropping in discrete jumps is a lurch, and a lurch the
+	# player did not cause is exactly what makes people ill in a headset.
+	var head := camera.global_position
+	var target := _ground_height(head.x, head.z)
+	var dy := target - global_position.y
+
+	if dy > 0.0:
+		global_position.y = target
+		_velocity_y = 0.0
+	elif dy < -0.02:
+		_velocity_y -= GRAVITY * delta
+		global_position.y = maxf(target, global_position.y + _velocity_y * delta)
+		if is_equal_approx(global_position.y, target):
+			_velocity_y = 0.0
 
 
 func _handle_snap_turn() -> void:

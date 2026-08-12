@@ -30,6 +30,11 @@ jobs:
   build:
     name: Export APK
     runs-on: ubuntu-latest
+    # A headless Godot command that decides to wait for something will wait
+    # forever, and the default job timeout is six hours of billed runner
+    # time reporting nothing. Twenty-five minutes is generous for a gradle
+    # build from a warm SDK and turns a hang into a fast, legible failure.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -95,14 +100,28 @@ jobs:
       - name: Install the Android build template
         working-directory: godot
         run: |
+          set -euo pipefail
           # The preset sets gradle_build/use_gradle_build=true, which is what
           # an OpenXR/Quest export needs — the plain prebuilt APK template
           # cannot add the OpenXR loader. A gradle build in turn needs the
           # build template unpacked into res://android/, which is a separate
           # step from installing the export templates and fails with
           # "Android build template not installed in the project" if skipped.
-          # It is generated, not authored, so .gitignore excludes godot/android/.
-          godot --headless --install-android-build-template
+          #
+          # Unzipped by hand rather than via `godot
+          # --install-android-build-template`: that command never returns in
+          # headless CI (it hung for 30+ minutes here before being killed,
+          # with the step showing no output at all). What it does is entirely
+          # mechanical — extract android_source.zip, record the version,
+          # drop a .gdignore so the editor does not try to import the Java
+          # sources as game assets — so doing it directly is both faster and
+          # cannot hang.
+          TEMPLATES="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_RELEASE}"
+          mkdir -p android/build
+          unzip -q "${TEMPLATES}/android_source.zip" -d android/build
+          echo "${GODOT_VERSION}.${GODOT_RELEASE}" > android/.build_version
+          touch android/build/.gdignore
+          ls android/build | head
 
       - name: Export APK
         working-directory: godot

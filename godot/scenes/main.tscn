@@ -1,10 +1,11 @@
-[gd_scene load_steps=6 format=3 uid="uid://bkaisei0main0"]
+[gd_scene load_steps=7 format=3 uid="uid://bkaisei0main0"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/city.gd" id="2_city"]
 [ext_resource type="Script" path="res://scripts/player.gd" id="3_player"]
 [ext_resource type="Script" path="res://scripts/sword.gd" id="4_sword"]
 [ext_resource type="Script" path="res://scripts/racing.gd" id="5_racing"]
+[ext_resource type="Script" path="res://scripts/lounge.gd" id="6_lounge"]
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
@@ -37,3 +38,6 @@ script = ExtResource("4_sword")
 ; city's coordinates rather than sitting on its own transform.
 [node name="Circuit" type="Node3D" parent="."]
 script = ExtResource("5_racing")
+
+[node name="Lounge" type="Node3D" parent="."]
+script = ExtResource("6_lounge")
