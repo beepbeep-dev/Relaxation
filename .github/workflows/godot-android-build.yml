@@ -164,7 +164,16 @@ jobs:
           TEMPLATES="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_RELEASE}"
           mkdir -p android/build
           unzip -q "${TEMPLATES}/android_source.zip" -d android/build
-          echo "${GODOT_VERSION}.${GODOT_RELEASE}" > android/.build_version
+
+          # .build_version must hold Godot's *full* template identifier
+          # (e.g. "4.3.stable.official.77dcf97d8"), not the "4.3.stable"
+          # directory name. Godot compares this string against its own build
+          # identifier and refuses the export on a mismatch. version.txt
+          # ships inside the export templates and contains exactly that
+          # string, so copying it is both correct and immune to guessing.
+          cp "${TEMPLATES}/version.txt" android/.build_version
+          echo "build template identifier: $(cat android/.build_version)"
+
           touch android/build/.gdignore
           ls android/build | head
 
@@ -189,13 +198,21 @@ jobs:
           # a hand-written .tres that Godot declines to parse falls back to
           # defaults *silently*, which is indistinguishable from these
           # settings simply not applying.
+          # The keystore is set here as well as through the environment
+          # variables above: those are only honoured by newer Godot versions,
+          # and on 4.3 an unset debug keystore is one of the checks that can
+          # fail the export. Setting both costs nothing and removes a
+          # version-dependent guess.
           if [ -f "$SETTINGS" ]; then
-            python3 - "$SETTINGS" "$ANDROID_SDK_ROOT" "$JAVA_HOME" <<'PY'
+            python3 - "$SETTINGS" "$ANDROID_SDK_ROOT" "$JAVA_HOME" "$GITHUB_WORKSPACE/debug.keystore" <<'PY'
           import re, sys
-          path, sdk, jdk = sys.argv[1], sys.argv[2], sys.argv[3]
+          path, sdk, jdk, keystore = sys.argv[1:5]
           text = open(path).read()
           for key, value in (("export/android/android_sdk_path", sdk),
-                             ("export/android/java_sdk_path", jdk)):
+                             ("export/android/java_sdk_path", jdk),
+                             ("export/android/debug_keystore", keystore),
+                             ("export/android/debug_keystore_user", "androiddebugkey"),
+                             ("export/android/debug_keystore_pass", "android")):
               line = f'{key} = "{value}"'
               if re.search(rf'^{re.escape(key)}\s*=', text, re.M):
                   text = re.sub(rf'^{re.escape(key)}\s*=.*$', line, text, flags=re.M)
@@ -204,13 +221,13 @@ jobs:
           open(path, "w").write(text)
           PY
           else
-            printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\nexport/android/android_sdk_path = "%s"\nexport/android/java_sdk_path = "%s"\n' \
-              "$ANDROID_SDK_ROOT" "$JAVA_HOME" > "$SETTINGS"
+            printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\nexport/android/android_sdk_path = "%s"\nexport/android/java_sdk_path = "%s"\nexport/android/debug_keystore = "%s"\nexport/android/debug_keystore_user = "androiddebugkey"\nexport/android/debug_keystore_pass = "android"\n' \
+              "$ANDROID_SDK_ROOT" "$JAVA_HOME" "$GITHUB_WORKSPACE/debug.keystore" > "$SETTINGS"
           fi
 
           # Assert it stuck. A silently-empty SDK path is the whole failure
           # mode being chased here, so it is not something to take on faith.
-          grep -n "android_sdk_path\|java_sdk_path" "$SETTINGS"
+          grep -n "android_sdk_path\|java_sdk_path\|debug_keystore" "$SETTINGS"
           grep -q "android_sdk_path = \"${ANDROID_SDK_ROOT}\"" "$SETTINGS"
 
       - name: Export APK

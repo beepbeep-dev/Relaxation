@@ -35,7 +35,13 @@ var _velocity_y := 0.0
 ## exist — annotating it `Node` would make the duck-typed call below a parse
 ## error, because GDScript rejects an unknown method on a statically known
 ## type even behind a has_method() guard.
-@onready var _terrain = get_tree().current_scene.get_node_or_null("Lounge")
+##
+## Found via get_parent(), not get_tree().current_scene: current_scene is
+## null whenever this scene is instantiated rather than made the active one
+## — which is exactly what the headless smoke test does, and it threw
+## "Cannot call method 'get_node_or_null' on a null value" there. The rig's
+## parent is the scene root either way, so this works in both cases.
+@onready var _terrain = get_parent().get_node_or_null("Lounge") if get_parent() else null
 
 var _wrist: WristPanel
 var _grip_latched := false
