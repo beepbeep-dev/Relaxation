@@ -17,6 +17,8 @@ extends SceneTree
 ## design says it should, and the game logic advances when stepped.
 
 var _failures := 0
+var _main: Node
+var _frames := 0
 
 
 func _ok(label: String) -> void:
@@ -38,15 +40,32 @@ func _check(condition: bool, label: String) -> void:
 
 func _initialize() -> void:
 	print("\n--- Kaisei smoke test ---\n")
+	_main = load("res://scenes/main.tscn").instantiate()
+	root.add_child(_main)
 
-	var main: Node = load("res://scenes/main.tscn").instantiate()
-	root.add_child(main)
-	_check(main != null, "main scene instantiates")
 
-	_check_city(main)
-	_check_lounge(main)
-	_check_racing(main)
-	_check_sword(main)
+## Assertions run from _process, not _initialize.
+##
+## A node added during _initialize() has not had _ready() called on it yet —
+## the tree has not begun iterating. Asserting there reports an empty city, a
+## seatless lounge and an out-of-bounds track lookup, none of which are real:
+## they are just the scene never having built. Waiting a frame is the
+## difference between testing the game and testing the harness.
+func _process(_delta: float) -> bool:
+	_frames += 1
+	if _frames < 2:
+		return false
+
+	_check(_main != null, "main scene instantiates")
+
+	# Hand-step the games below rather than letting the tree also drive them,
+	# so the number of simulated frames is exactly what each check asks for.
+	_main.propagate_call("set_process", [false])
+
+	_check_city(_main)
+	_check_lounge(_main)
+	_check_racing(_main)
+	_check_sword(_main)
 
 	print("")
 	if _failures == 0:
@@ -55,6 +74,7 @@ func _initialize() -> void:
 	else:
 		print("SMOKE FAILED (%d)" % _failures)
 		quit(1)
+	return true
 
 
 func _check_city(main: Node) -> void:

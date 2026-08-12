@@ -103,6 +103,12 @@ func _build_track() -> void:
 ## Position on the circuit at t in 0..1, measured in arc length rather than
 ## in samples, so speed in metres per second means what it says.
 func point_at(t: float) -> Vector3:
+	# Guard rather than index blindly: if the track has not been built yet,
+	# the lookup below runs off the end of the arc-length table and spams a
+	# hard error every frame, which buries whatever the actual problem was.
+	if _points.size() < 2:
+		return Vector3.ZERO
+
 	var target := fposmod(t, 1.0) * _total_length
 	var lo := 0
 	var hi := _cumulative.size() - 1
