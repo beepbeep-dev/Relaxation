@@ -1,0 +1,107 @@
+name: Godot Android APK
+
+# Builds godot/ into a Quest-installable .apk.
+#
+# Unlike the Unity path this replaced, THIS WORKFLOW NEEDS NO SECRETS AND NO
+# ACCOUNT. Godot is MIT-licensed: no login, no license file, no activation
+# step, for the editor or for anything it builds. Every input is fetched from
+# a public URL at build time. Click "Run workflow" and download the artifact.
+#
+# The debug keystore is generated in-workflow. Android refuses to install an
+# unsigned APK, but a *debug*-signed one installs fine via adb/SideQuest,
+# which is what sideloading to a Quest wants. Publishing to a store later
+# needs a real release keystore, which is the only point a secret enters —
+# and that is a store requirement, not an engine one.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'godot/**'
+      - '.github/workflows/godot-android-build.yml'
+
+env:
+  GODOT_VERSION: 4.3
+  # Godot's own release naming; the export templates must match the editor
+  # version exactly or the export silently falls back and fails.
+  GODOT_RELEASE: stable
+
+jobs:
+  build:
+    name: Export APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build-tools and platform
+        run: |
+          sdkmanager --install "platform-tools" "build-tools;34.0.0" "platforms;android-34" "cmdline-tools;latest"
+
+      - name: Download Godot ${{ env.GODOT_VERSION }} and export templates
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-${GODOT_RELEASE}"
+          curl -fsSL -o godot.zip "${BASE}/Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_linux.x86_64.zip"
+          curl -fsSL -o templates.tpz "${BASE}/Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_export_templates.tpz"
+
+          unzip -q godot.zip
+          mv Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_linux.x86_64 /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+
+          # Templates must land in the exact versioned directory Godot looks
+          # in, or the export reports "no export template found" with the
+          # templates plainly sitting on disk.
+          mkdir -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_RELEASE}
+          unzip -q templates.tpz
+          mv templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_RELEASE}/
+
+      - name: Generate a debug keystore
+        run: |
+          keytool -keyalg RSA -genkeypair -alias androiddebugkey \
+            -keypass android -keystore debug.keystore -storepass android \
+            -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
+
+      - name: Point Godot at the Android SDK and keystore
+        run: |
+          mkdir -p ~/.config/godot
+          cat > ~/.config/godot/editor_settings-4.tres <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "${ANDROID_SDK_ROOT}"
+          export/android/debug_keystore = "${GITHUB_WORKSPACE}/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+
+      - name: Import project
+        working-directory: godot
+        run: |
+          # A cold project has no .godot/ cache, and exporting before the
+          # importer has run produces an APK missing every imported resource.
+          # --import populates it; it exits non-zero on some versions even
+          # when it worked, hence the guard.
+          godot --headless --import || true
+
+      - name: Export APK
+        working-directory: godot
+        run: |
+          set -euo pipefail
+          mkdir -p ../build
+          godot --headless --export-debug "Quest" ../build/kaisei.apk
+          ls -la ../build/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kaisei-quest-apk
+          path: build/kaisei.apk
+          if-no-files-found: error

@@ -1,0 +1,25 @@
+[gd_scene load_steps=4 format=3 uid="uid://bkaisei0main0"]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/city.gd" id="2_city"]
+[ext_resource type="Script" path="res://scripts/player.gd" id="3_player"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="XROrigin3D" type="XROrigin3D" parent="."]
+script = ExtResource("3_player")
+
+[node name="XRCamera3D" type="XRCamera3D" parent="XROrigin3D"]
+; 1.65m is only the flat-mode fallback. In a real session the runtime
+; supplies head height and overwrites this every frame.
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.65, 0)
+
+[node name="LeftHand" type="XRController3D" parent="XROrigin3D"]
+tracker = &"left_hand"
+
+[node name="RightHand" type="XRController3D" parent="XROrigin3D"]
+tracker = &"right_hand"
+
+[node name="City" type="Node3D" parent="."]
+script = ExtResource("2_city")

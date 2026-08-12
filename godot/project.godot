@@ -1,0 +1,65 @@
+; Kaisei — Godot 4 project.
+;
+; This is the APK path. Godot is MIT-licensed and ships no account, login,
+; sign-in wall, or license file at any point — installing it, building with
+; it, and shipping what it builds require nothing from anyone. That is the
+; entire reason the Android target moved here from Unity.
+;
+; Format 5 is Godot 4.x. Do not hand-edit `config_version`.
+
+config_version=5
+
+[application]
+
+config/name="Kaisei"
+config/description="Relax in a futuristic city."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3", "Forward Plus")
+config/icon="res://icon.svg"
+
+[autoload]
+
+Palette="*res://scripts/palette.gd"
+
+[display]
+
+; Stereo rendering is driven by the XR interface, not by the window. The
+; window size only matters when running flat on a desktop for debugging.
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="viewport"
+window/vsync/vsync_mode=0
+
+[rendering]
+
+; "mobile" is the correct renderer for standalone Quest: it is a forward
+; renderer built for tile-based GPUs, and unlike forward_plus it does not
+; assume the bandwidth for clustered lighting and a depth prepass. Picking
+; forward_plus here is the single most common way a Quest build ends up at
+; 30fps with no obvious cause.
+renderer/rendering_method="mobile"
+renderer/rendering_method.mobile="mobile"
+
+; MSAA rather than any post-process AA: on a tile-based GPU MSAA resolves
+; inside tile memory and is close to free, while FXAA/TAA are full-screen
+; passes that cost bandwidth this build does not have. Same reasoning as the
+; WebXR build's refusal to run a post stack.
+anti_aliasing/quality/msaa_3d=2
+anti_aliasing/quality/screen_space_aa=0
+anti_aliasing/quality/use_taa=false
+
+; Shadows: one directional light casting into a small atlas. The city is lit
+; by two real lights and a lot of emissive, exactly as in the WebXR build.
+lights_and_shadows/directional_shadow/size=2048
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=1
+
+environment/defaults/default_clear_color=Color(0.031, 0.024, 0.059, 1)
+
+[xr]
+
+openxr/enabled=true
+; A seated player must be able to reach everything — a design constraint
+; carried over from the WebXR build, not an engine one.
+openxr/reference_space=1
+openxr/submit_depth_buffer=true
+shaders/enabled=true
