@@ -39,7 +39,7 @@ export const PRESETS = {
     envMapSize: 64, drawDistance: 260, fogDensity: 0.0075,
     cityBlocks: 6, propDensity: 0.35, trafficCount: 10,
     rain: false, rainDensity: 0.3,
-    glowIntensity: 0.85, exposure: 1.05,
+    glowIntensity: 0.85, exposure: 3.4,
     skylineRings: 1,
   },
   balanced: {
@@ -50,7 +50,7 @@ export const PRESETS = {
     envMapSize: 128, drawDistance: 440, fogDensity: 0.0052,
     cityBlocks: 8, propDensity: 0.7, trafficCount: 26,
     rain: true, rainDensity: 0.7,
-    glowIntensity: 1.0, exposure: 1.05,
+    glowIntensity: 1.0, exposure: 3.4,
     skylineRings: 2,
   },
   high: {
@@ -61,7 +61,7 @@ export const PRESETS = {
     envMapSize: 256, drawDistance: 650, fogDensity: 0.0042,
     cityBlocks: 10, propDensity: 1.0, trafficCount: 40,
     rain: true, rainDensity: 1.0,
-    glowIntensity: 1.0, exposure: 1.05,
+    glowIntensity: 1.0, exposure: 3.4,
     skylineRings: 3,
   },
   ultra: {
@@ -72,7 +72,7 @@ export const PRESETS = {
     envMapSize: 512, drawDistance: 900, fogDensity: 0.0034,
     cityBlocks: 12, propDensity: 1.4, trafficCount: 60,
     rain: true, rainDensity: 1.4,
-    glowIntensity: 1.05, exposure: 1.1,
+    glowIntensity: 1.05, exposure: 3.4,
     skylineRings: 4,
   },
 };

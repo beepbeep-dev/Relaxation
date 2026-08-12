@@ -122,7 +122,7 @@ export function createSky(renderer, scene) {
   bakeScene.add(bakeSky);
   const envRT = pmrem.fromScene(bakeScene, 0, 0.1, 1000);
   scene.environment = envRT.texture;
-  scene.environmentIntensity = 1.0;
+  scene.environmentIntensity = 1.35;
   pmrem.dispose();
   // Only the material: Object3D.clone() shares the geometry with the original,
   // so disposing the clone's would tear down the real skydome's buffers too.
@@ -141,7 +141,17 @@ export function createSky(renderer, scene) {
 
 /** Key light + fill. Two lights is the whole budget for the city. */
 export function createLighting(scene) {
-  const sun = new THREE.DirectionalLight(linear(PALETTE.keyLight), 2.2);
+  // A player reported seeing "no textures". The textures were fine — the
+  // frame was too dark to read them: median pixel brightness 4/255, with 78%
+  // of the screen below 25/255. That is not a moody night scene, it is an
+  // unreadable one.
+  //
+  // The fix was not here. Isolating each light source one at a time showed
+  // the key light barely registers against the baked environment map, so
+  // exposure (see core/settings.js) is what actually lifted the image, from
+  // a median of 4 to 31. This value is raised anyway so the key light does
+  // something on vertical faces, but do not expect it to move the ground.
+  const sun = new THREE.DirectionalLight(linear(PALETTE.keyLight), 5.2);
   sun.position.copy(SUN_DIRECTION).multiplyScalar(140);
   sun.castShadow = QUALITY.shadows;
   if (QUALITY.shadows) {
@@ -155,17 +165,16 @@ export function createLighting(scene) {
   scene.add(sun);
   scene.add(sun.target);
 
-  // Green bounce from the horizon against purple bounce from the wet street.
-  // The hue spread between them is what stops unlit surfaces reading as grey;
-  // it replaces the warm/cool split a daylight scene would normally use.
-  // Kept low on purpose. A hemisphere light tints *every* upward-facing
-  // surface, so a saturated green fill at any real intensity turns the whole
-  // street into a lawn. It is here for hue separation in shadow, not for
-  // brightness — the key light and the emissive city do the lifting.
+  // Hue separation in shadow only. Measurement settled a long-standing
+  // misconception here: switching the environment map off drops the whole
+  // frame to a median of 1/255, so the baked IBL — not these two lights — is
+  // supplying essentially all the illumination. Raising this fill from 0.42
+  // to 4.0 changed the rendered ground by one 8-bit level. It is here for the
+  // green/purple split against neutral grey, and for nothing else.
   const fill = new THREE.HemisphereLight(
     linear(PALETTE.fillSky),
     linear(PALETTE.fillGround),
-    0.42
+    0.32
   );
   scene.add(fill);
 

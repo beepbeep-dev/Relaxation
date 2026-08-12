@@ -44,12 +44,12 @@ export const PALETTE = {
   accentPurple: '#b98cff',
 
   // --- surfaces
-  concrete: '#333a56',
-  darkMetal: '#151a2c',
-  wetGround: '#161c33',
+  concrete: '#4d5680',
+  darkMetal: '#2a3150',
+  wetGround: '#2b3350',
   glass: '#0e1830',
-  deckWood: '#2c2440',       // stained violet rather than brown
-  cushion: '#3a2a63',
+  deckWood: '#463a63',       // stained violet rather than brown
+  cushion: '#54408c',
 
   // --- window lights in tower facades
   windows: ['#c9f7e6', '#9fd4ff', '#c4b5fd', '#e8f4ff', '#7ce8c4', '#a5b4fc'],
