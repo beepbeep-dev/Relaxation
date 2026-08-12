@@ -125,17 +125,13 @@ jobs:
             echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android"
           } >> "$GITHUB_ENV"
 
-          # The SDK path has no env-var equivalent, so it still goes through
-          # editor settings.
-          mkdir -p ~/.config/godot
-          cat > ~/.config/godot/editor_settings-4.tres <<EOF
-          [gd_resource type="EditorSettings" format=3]
-
-          [resource]
-          export/android/android_sdk_path = "${ANDROID_SDK_ROOT}"
-          export/android/java_sdk_path = "${JAVA_HOME}"
-          EOF
-          cat ~/.config/godot/editor_settings-4.tres
+          # The SDK path has no env-var equivalent, so it goes through editor
+          # settings — but that write happens *after* the import step below,
+          # not here. Godot rewrites this file on every run ("EditorSettings:
+          # Save OK!" in the log), so anything written before an intervening
+          # godot invocation is silently replaced with defaults, taking the
+          # SDK path with it. That is the most likely reason the export kept
+          # failing with a configuration error naming nothing at all.
 
       - name: Import project
         working-directory: godot
@@ -171,6 +167,51 @@ jobs:
           echo "${GODOT_VERSION}.${GODOT_RELEASE}" > android/.build_version
           touch android/build/.gdignore
           ls android/build | head
+
+      - name: Smoke test
+        working-directory: godot
+        run: |
+          set -euo pipefail
+          # Constructs the whole scene headlessly and steps the games. Godot
+          # parses every script it loads, so this catches parse errors,
+          # unknown methods on typed variables and bad property names — the
+          # class of failure that has cost the most CI round trips here —
+          # before the far slower gradle export runs.
+          godot --headless --script res://scripts/smoke.gd
+
+      - name: Write editor settings, after the last godot run that could clobber them
+        run: |
+          set -euo pipefail
+          SETTINGS=~/.config/godot/editor_settings-4.tres
+          mkdir -p ~/.config/godot
+
+          # Patch the file Godot itself generated rather than replacing it:
+          # a hand-written .tres that Godot declines to parse falls back to
+          # defaults *silently*, which is indistinguishable from these
+          # settings simply not applying.
+          if [ -f "$SETTINGS" ]; then
+            python3 - "$SETTINGS" "$ANDROID_SDK_ROOT" "$JAVA_HOME" <<'PY'
+          import re, sys
+          path, sdk, jdk = sys.argv[1], sys.argv[2], sys.argv[3]
+          text = open(path).read()
+          for key, value in (("export/android/android_sdk_path", sdk),
+                             ("export/android/java_sdk_path", jdk)):
+              line = f'{key} = "{value}"'
+              if re.search(rf'^{re.escape(key)}\s*=', text, re.M):
+                  text = re.sub(rf'^{re.escape(key)}\s*=.*$', line, text, flags=re.M)
+              else:
+                  text = text.replace("[resource]", "[resource]\n" + line, 1)
+          open(path, "w").write(text)
+          PY
+          else
+            printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\nexport/android/android_sdk_path = "%s"\nexport/android/java_sdk_path = "%s"\n' \
+              "$ANDROID_SDK_ROOT" "$JAVA_HOME" > "$SETTINGS"
+          fi
+
+          # Assert it stuck. A silently-empty SDK path is the whole failure
+          # mode being chased here, so it is not something to take on faith.
+          grep -n "android_sdk_path\|java_sdk_path" "$SETTINGS"
+          grep -q "android_sdk_path = \"${ANDROID_SDK_ROOT}\"" "$SETTINGS"
 
       - name: Export APK
         working-directory: godot
