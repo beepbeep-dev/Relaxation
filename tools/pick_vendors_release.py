@@ -45,8 +45,21 @@ def main() -> int:
               f"{[a['name'] for a in chosen.get('assets', [])]}", file=sys.stderr)
         return 1
 
-    print(f"chosen: {chosen['tag_name']} -> {zips[0]['name']}", file=sys.stderr)
-    print(zips[0]["browser_download_url"])
+    print(f"assets: {[a['name'] for a in zips]}", file=sys.stderr)
+
+    # Releases ship demo projects alongside the addon itself — 4.3.1 carries
+    # an "androidxr-depth-texture-sample.zip", and taking the first .zip
+    # grabbed that instead, which is neither a plugin nor a valid download.
+    # Match the addon by name rather than by position.
+    addon = next((a for a in zips if "addon" in a["name"].lower()), None)
+    if addon is None:
+        addon = next((a for a in zips if "vendor" in a["name"].lower()), None)
+    if addon is None:
+        print(f"no addon zip among {[a['name'] for a in zips]}", file=sys.stderr)
+        return 1
+
+    print(f"chosen: {chosen['tag_name']} -> {addon['name']}", file=sys.stderr)
+    print(addon["browser_download_url"])
     return 0
 
 
