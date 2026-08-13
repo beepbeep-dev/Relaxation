@@ -195,8 +195,16 @@ const col = (hex) => new THREE.Color(hex);
  * subpath on GitHub Pages, and an absolute path would 404 there.
  */
 const SURFACE_TEXTURES = {
-  asphalt: { file: 'asphalt.jpg', normalFile: 'asphalt_n.jpg', repeat: 90, normalScale: 0.55 },
-  concrete: { file: 'concrete.jpg', normalFile: 'concrete_n.jpg', repeat: 9, normalScale: 0.8 },
+  // 5.6m per tile (repeat 90 across a 504m plane) is far larger than the
+  // ~1-2m a real asphalt photograph covers, so the grain was stretched to
+  // the point of invisibility at standing height. 220 puts a tile at ~2.3m.
+  asphalt: { file: 'asphalt.jpg', normalFile: 'asphalt_n.jpg', repeat: 220, normalScale: 1.4 },
+  // The pavement slabs are the surface a player actually stands on and looks
+  // at for most of the game — 31m blocks, one per city block — so this is the
+  // texture that decides whether the world reads as detailed at all. It is
+  // also the one that was measured at std 5.1 (flat grey), which is why the
+  // game looked untextured no matter what the road did.
+  concrete: { file: 'concrete.jpg', normalFile: 'concrete_n.jpg', repeat: 16, normalScale: 1.5 },
   panel: { file: 'panel.jpg', normalFile: 'panel_n.jpg', repeat: 3, normalScale: 0.5 },
   wood: { file: 'wood.jpg', normalFile: 'wood_n.jpg', repeat: 6, normalScale: 0.6 },
   fabric: { file: 'fabric.jpg', normalFile: 'fabric_n.jpg', repeat: 4, normalScale: 0.7 },
@@ -217,7 +225,11 @@ export function loadSurfaceTextures(onReady) {
         tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
         tex.repeat.set(repeat, repeat);
         tex.colorSpace = THREE.SRGBColorSpace;
-        tex.anisotropy = 4;
+        // 16, not 4. A road is viewed almost edge-on for most of the screen,
+        // and that is precisely where low anisotropy collapses the grain into
+        // a smear of average grey — the surface reads as polished, and the
+        // texture may as well not be there.
+        tex.anisotropy = 16;
         out[name] = tex;
         settle();
       },
@@ -285,18 +297,27 @@ export function library() {
     facadeAlt: facadeTexture(512, { cols: 12, rows: 20, lit: 0.3, seed: 31 }),
     puddles,
 
-    // Wet asphalt, not a mirror. envMapIntensity is deliberately low: the
-    // baked environment is dominated by a bright saturated horizon band, and
-    // at anything near 1.0 the road stops being a surface and becomes a
-    // reflection of the sky's single strongest colour.
+    // Wet asphalt, not a mirror — and it was reading as a mirror. Standing on
+    // the street and looking down showed a smooth glossy sheet with no grain
+    // at all, which is exactly what a player meant by "I see no textures".
+    //
+    // Two things caused it. The roughness map drove large areas glossy, and
+    // at metalness 0.22 a metallic surface has *no* diffuse term to show
+    // albedo with — so the specular reflection of a bright saturated sky won,
+    // and the texture underneath it was invisible regardless of its content.
+    //
+    // Asphalt is not metal. Metalness drops to near zero so the albedo
+    // actually shows, roughness rises so the sky reflection becomes a sheen
+    // rather than a mirror, and the puddle mask now varies roughness within
+    // a wet-but-not-polished range instead of reaching glass.
     wetGround: new THREE.MeshStandardMaterial({
       color: col(PALETTE.wetGround),
-      roughness: 0.6,
-      metalness: 0.22,
+      roughness: 0.78,
+      metalness: 0.04,
       roughnessMap: puddles,
       normalMap: groundNormal,
-      normalScale: new THREE.Vector2(0.4, 0.4),
-      envMapIntensity: 0.5,
+      normalScale: new THREE.Vector2(0.85, 0.85),
+      envMapIntensity: 0.45,
     }),
 
     concrete: new THREE.MeshStandardMaterial({

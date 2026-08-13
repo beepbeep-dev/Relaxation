@@ -140,7 +140,7 @@ def make_seamless(img: Image.Image) -> Image.Image:
     return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
 
 
-def flatten_lighting(img: Image.Image, strength: float = 0.85) -> Image.Image:
+def flatten_lighting(img: Image.Image, strength: float = 0.62) -> Image.Image:
     """Divide out a heavy blur, removing baked illumination but keeping grain."""
     a = np.asarray(img.convert("RGB"), dtype=np.float32)
     low = np.asarray(img.convert("RGB").filter(ImageFilter.GaussianBlur(28)),
@@ -150,7 +150,33 @@ def flatten_lighting(img: Image.Image, strength: float = 0.85) -> Image.Image:
     return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
 
 
-def toward_grey(img: Image.Image, amount: float = 0.78) -> Image.Image:
+def normalise_contrast(img: Image.Image, target_std: float = 46.0) -> Image.Image:
+    """
+    Scale the image's spread to a target standard deviation.
+
+    This is the step whose absence made the whole texture effort pointless.
+    Measured on the shipped set, concrete came out at std 5.1 and panel at
+    10.2 — flat grey for all practical purposes, and invisible once
+    multiplied against a material colour. The cause is the three steps above
+    stacking: dividing out the lighting removes broad variation, blending
+    four half-offset copies for tiling averages four uncorrelated samples
+    (which alone cuts the spread roughly in half), and pulling towards grey
+    removes what colour variation survived.
+
+    Each of those steps is individually correct and worth keeping. The fix is
+    to restore the spread afterwards, explicitly and to a measured number,
+    rather than hoping enough of it survives.
+    """
+    a = np.asarray(img.convert("RGB"), dtype=np.float32)
+    mean = a.mean()
+    std = a.std()
+    if std < 1e-3:
+        return img
+    out = (a - mean) * (target_std / std) + mean
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
+
+
+def toward_grey(img: Image.Image, amount: float = 0.55) -> Image.Image:
     """Pull most of the way to greyscale so the engine's palette decides hue."""
     a = np.asarray(img.convert("RGB"), dtype=np.float32)
     lum = a @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
@@ -223,6 +249,7 @@ def main() -> int:
         image = flatten_lighting(image)
         image = make_seamless(image)
         image = toward_grey(image)
+        image = normalise_contrast(image)
         # Downsample last: every op above works in the pixel domain, so doing
         # this first would just make them operate on fewer samples. Doing it
         # last is what actually buys back the aliasing sdxl-turbo's 2-step
